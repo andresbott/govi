@@ -32,6 +32,10 @@ import (
 )
 
 const (
+	// appID is the window class / Wayland app id; it has to match the basename
+	// of the installed desktop entry (zarf/govi.desktop) for the shell to
+	// associate window and launcher icon.
+	appID         = "govi"
 	initialWidth  = 1280
 	initialHeight = 720
 	// idleFrame caps how long the loop sleeps when no video frame or input
@@ -91,10 +95,26 @@ type Player struct {
 	// navigation; nil when the source has no folder (URL) or scanning failed.
 	pl *playlist
 
+	// pf warms the OS page cache for the entries around the current one, so
+	// next/previous does not wait on cold-storage reads.
+	pf prefetcher
+
 	// infoCache holds the info overlay's rows, re-read from mpv once per
 	// second while the overlay is open (see loop).
 	infoCache       []infoRow
 	infoRefreshedAt time.Time
+
+	// osdText is the transient status flash (volume level, playlist position,
+	// playback progress) drawn until osdUntil passes; see osd.go. osdProgress
+	// marks a progress flash, which the loop keeps re-reading from mpv while it
+	// is visible.
+	osdText     string
+	osdUntil    time.Time
+	osdProgress bool
+
+	// lastRepeat is when each action last fired, so held-down keys are
+	// throttled to the action's own repeat interval (see dispatchKey).
+	lastRepeat map[actionID]time.Time
 
 	// windowed geometry remembered while fullscreen, restored on exit.
 	winX, winY, winW, winH int
@@ -191,13 +211,17 @@ func Run(ctx context.Context, path string, cfg Config) error {
 		p.mpv.TerminateDestroy()
 	}()
 
+	// Stop warming neighbours before mpv goes away; the reads are best-effort
+	// and must not outlive the player.
+	defer p.pf.stop()
+
 	p.registerCallbacks()
 
 	if path != "" {
 		if err := p.mpv.Command([]string{"loadfile", path}); err != nil {
 			return fmt.Errorf("loadfile %q: %w", path, err)
 		}
-		p.pl = scanPlaylist(path)
+		p.setPlaylist(path)
 		p.log.Info("playing", "file", path, "startup", time.Since(start))
 	} else {
 		p.log.Info("started on idle screen", "startup", time.Since(start))
@@ -224,6 +248,14 @@ func (p *Player) initWindow() error {
 	}
 	glfw.WindowHint(glfw.ScaleToMonitor, glfw.True)
 	glfw.WindowHint(glfw.CocoaRetinaFramebuffer, glfw.True)
+	// WM_CLASS must match StartupWMClass in zarf/govi.desktop, otherwise
+	// the desktop shell cannot tie the window to the .desktop entry (no icon in
+	// the task bar, no pinning). Without these hints GLFW derives the class from
+	// the window title, which changes with the playing file. Hints are sticky,
+	// so the preferences window inherits the same class — intended, it belongs
+	// to the same application.
+	glfw.WindowHintString(glfw.X11ClassName, appID)
+	glfw.WindowHintString(glfw.X11InstanceName, appID)
 	if desktopGL {
 		glfw.WindowHint(glfw.ContextVersionMajor, 3)
 		glfw.WindowHint(glfw.ContextVersionMinor, 3)
@@ -236,7 +268,7 @@ func (p *Player) initWindow() error {
 		glfw.WindowHint(glfw.ContextVersionMinor, 0)
 	}
 
-	window, err := glfw.CreateWindow(initialWidth, initialHeight, "govi", nil, nil)
+	window, err := glfw.CreateWindow(initialWidth, initialHeight, appID, nil, nil)
 	if err != nil {
 		glfw.Terminate()
 		return fmt.Errorf("create window: %w", err)
@@ -392,6 +424,10 @@ func (p *Player) loop(ctx context.Context) error {
 			p.infoCache = nil
 		}
 
+		// A progress flash tracks playback while it is visible, so a seek shows
+		// the position mpv actually reached rather than the pre-seek one.
+		p.refreshOSD(time.Now())
+
 		// Render every iteration so the overlay stays responsive even while
 		// playback is paused and no new video frames arrive.
 		frameStart := time.Now()
@@ -470,7 +506,14 @@ func (p *Player) togglePause() {
 // clear the playlist.
 func (p *Player) openFile(path string) {
 	p.loadFile(path)
+	p.setPlaylist(path)
+}
+
+// setPlaylist rebuilds the playlist from path's folder and warms the page
+// cache for its neighbours, so the first next/previous is already in memory.
+func (p *Player) setPlaylist(path string) {
 	p.pl = scanPlaylist(path)
+	p.pf.start(p.pl.neighbors())
 }
 
 // loadFile asks mpv to play path without touching the playlist (used for
@@ -495,27 +538,40 @@ func (p *Player) stop() {
 }
 
 // seek moves playback position by delta seconds (negative = backwards),
-// relative to the current position. mpv ignores it when no file is loaded.
+// relative to the current position, and flashes the resulting progress. mpv
+// ignores it when no file is loaded.
 func (p *Player) seek(delta int) {
 	if err := p.mpv.Command([]string{"seek", fmt.Sprintf("%d", delta), "relative"}); err != nil {
 		p.log.Error("mpv seek", "delta", delta, "err", err)
+		return
 	}
+	p.flashProgress()
+}
+
+// showProgress flashes the current playback progress on demand (its own
+// action), so the position is reachable without disturbing playback.
+func (p *Player) showProgress() {
+	p.flashProgress()
 }
 
 // changeVolume nudges mpv's volume by delta (percent), clamped by mpv's
-// own volume-max (set to 100 in initMpv).
+// own volume-max (set to 100 in initMpv), and flashes the resulting level.
 func (p *Player) changeVolume(delta int) {
 	if err := p.mpv.Command([]string{"add", "volume", fmt.Sprintf("%d", delta)}); err != nil {
 		p.log.Error("mpv add volume", "delta", delta, "err", err)
+		return
 	}
+	p.flashVolume()
 }
 
-// toggleMute flips mpv's mute flag.
+// toggleMute flips mpv's mute flag and flashes the new state.
 func (p *Player) toggleMute() {
 	p.muted = !p.muted
 	if err := p.mpv.SetProperty("mute", mpv.FormatFlag, p.muted); err != nil {
 		p.log.Error("set mute property", "muted", p.muted, "err", err)
+		return
 	}
+	p.flashVolume()
 }
 
 // toggleOverlay opens ov, or closes it if it is already open. Rendering is

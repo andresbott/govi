@@ -53,9 +53,28 @@ nfpms:
     priority: optional
     dependencies:
       - libmpv2
+    # desktop entry + icons make govi appear in the launcher and in the
+    # "open with" list for the video mime types listed in govi.desktop
     contents:
       - src: LICENSE
         dst: /usr/share/doc/govi/copyright
+      - src: zarf/govi.desktop
+        dst: /usr/share/applications/govi.desktop
+      - src: zarf/govi.svg
+        dst: /usr/share/icons/hicolor/scalable/apps/govi.svg
+      - src: zarf/govi-32.png
+        dst: /usr/share/icons/hicolor/32x32/apps/govi.png
+      - src: zarf/govi-48.png
+        dst: /usr/share/icons/hicolor/48x48/apps/govi.png
+      - src: zarf/govi-64.png
+        dst: /usr/share/icons/hicolor/64x64/apps/govi.png
+      - src: zarf/govi-128.png
+        dst: /usr/share/icons/hicolor/128x128/apps/govi.png
+      - src: zarf/govi-256.png
+        dst: /usr/share/icons/hicolor/256x256/apps/govi.png
+    scripts:
+      postinstall: zarf/postinstall.sh
+      postremove: zarf/postremove.sh
 
 checksum:
   name_template: 'checksums.txt'

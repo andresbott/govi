@@ -104,6 +104,8 @@ func (p *Player) playAdjacent(dir int) {
 		return
 	}
 	p.loadFile(next)
+	p.flashPosition()
+	p.pf.start(p.pl.neighbors())
 }
 
 // fileExists is playlist.advance's liveness check for real files.
@@ -123,6 +125,7 @@ func (p *Player) advanceAfterRemoval(path string) {
 	p.pl.remove(path)
 	if cur := p.pl.current(); cur != "" {
 		p.loadFile(cur)
+		p.pf.start(p.pl.neighbors())
 	}
 }
 

@@ -78,21 +78,20 @@ func (p *Player) registerCallbacks() {
 	})
 
 	p.window.SetKeyCallback(func(w *glfw.Window, key glfw.Key, scancode int, action glfw.Action, mods glfw.ModifierKey) {
-		if action != glfw.Press {
+		switch action {
+		case glfw.Press, glfw.Repeat:
+		default: // Release
 			return
 		}
-		if p.handleConfirmKey(key) {
-			return
-		}
-		if p.handleEscape(w, key, mods) {
-			return
-		}
-		chord := keyChord{key: key, mods: relevantMods(mods)}
-		if id, ok := p.keymap[chord]; ok {
-			if a, ok := p.actions[id]; ok && a.fn != nil {
-				a.fn(p)
+		if action == glfw.Press {
+			if p.handleConfirmKey(key) {
+				return
+			}
+			if p.handleEscape(w, key, mods) {
+				return
 			}
 		}
+		p.dispatchKey(keyChord{key: key, mods: relevantMods(mods)}, action == glfw.Repeat, time.Now())
 	})
 
 	p.window.SetDropCallback(func(w *glfw.Window, names []string) {
@@ -103,6 +102,32 @@ func (p *Player) registerCallbacks() {
 		p.log.Info("loading dropped file", "path", path)
 		p.openFile(path)
 	})
+}
+
+// dispatchKey runs the action bound to chord. repeated marks a GLFW
+// auto-repeat rather than a fresh press: those only fire for actions that opted
+// in (action.repeat > 0) and no more often than that interval, so the OS repeat
+// rate does not decide how fast the player navigates. now is the event time,
+// injected so the throttle is testable.
+func (p *Player) dispatchKey(chord keyChord, repeated bool, now time.Time) {
+	id, ok := p.keymap[chord]
+	if !ok {
+		return
+	}
+	a, ok := p.actions[id]
+	if !ok || a.fn == nil {
+		return
+	}
+	if repeated {
+		if a.repeat == 0 || now.Sub(p.lastRepeat[id]) < a.repeat {
+			return
+		}
+	}
+	if p.lastRepeat == nil {
+		p.lastRepeat = make(map[actionID]time.Time)
+	}
+	p.lastRepeat[id] = now
+	a.fn(p)
 }
 
 // handlePrimaryClick reacts to a primary click that Gio did not consume and

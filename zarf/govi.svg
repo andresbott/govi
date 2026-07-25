@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- govi application icon: the idle screen's play glyph on its dark backdrop. -->
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
+  <rect x="4" y="4" width="120" height="120" rx="24" fill="#1a1a1e"/>
+  <rect x="4" y="4" width="120" height="120" rx="24" fill="none" stroke="#3a3a42" stroke-width="2"/>
+  <path d="M50 38 L88 64 L50 90 Z" fill="#d8d8de"/>
+</svg>

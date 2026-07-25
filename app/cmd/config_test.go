@@ -91,6 +91,7 @@ func TestLoadConfigSupportsAllRegistryActions(t *testing.T) {
   move-to-trash: ["t"]
   delete-file: ["shift+d"]
   preferences: ["p"]
+  progress: ["o"]
 `)
 	cfg, err := loadConfig(path)
 	if err != nil {
@@ -100,12 +101,29 @@ func TestLoadConfigSupportsAllRegistryActions(t *testing.T) {
 	want := map[string]string{
 		"seek-forward": "l", "seek-back": "j", "next-video": "n",
 		"previous-video": "b", "move-to-trash": "t", "delete-file": "shift+d",
-		"preferences": "p",
+		"preferences": "p", "progress": "o",
 	}
 	for id, key := range want {
 		got := pc.Shortcuts[id]
 		if len(got) != 1 || got[0] != key {
 			t.Errorf("shortcut %q = %v, want [%s]", id, got, key)
+		}
+	}
+}
+
+// Every action the config accepts must also survive the trip into
+// player.Config: a new ShortcutsCfg field with no matching add() call in
+// toPlayerConfig would silently drop the user's override.
+func TestEveryKnownActionReachesPlayerConfig(t *testing.T) {
+	for id := range knownActions {
+		path := writeTemp(t, "shortcuts:\n  "+id+": [\"z\"]\n")
+		cfg, err := loadConfig(path)
+		if err != nil {
+			t.Errorf("loadConfig with only %q set: %v", id, err)
+			continue
+		}
+		if got := cfg.toPlayerConfig().Shortcuts[id]; len(got) != 1 || got[0] != "z" {
+			t.Errorf("shortcut %q = %v, want [z] — missing from toPlayerConfig?", id, got)
 		}
 	}
 }

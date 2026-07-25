@@ -1,6 +1,9 @@
 package player
 
-import "fmt"
+import (
+	"fmt"
+	"math"
+)
 
 // humanBytes formats a byte count using binary (IEC) units.
 func humanBytes(n int64) string {
@@ -26,6 +29,20 @@ func humanBitrate(bitsPerSec float64) string {
 		return fmt.Sprintf("%.0f kbps", bitsPerSec/1000)
 	}
 	return fmt.Sprintf("%.1f Mbps", bitsPerSec/1_000_000)
+}
+
+// humanClock formats a duration in seconds as a playback clock: "m:ss", or
+// "h:mm:ss" once it passes an hour. Negative input clamps to zero.
+func humanClock(seconds float64) string {
+	if seconds < 0 || math.IsNaN(seconds) {
+		seconds = 0
+	}
+	total := int(seconds)
+	h, m, s := total/3600, total/60%60, total%60
+	if h > 0 {
+		return fmt.Sprintf("%d:%02d:%02d", h, m, s)
+	}
+	return fmt.Sprintf("%d:%02d", m, s)
 }
 
 // humanRate formats a sample rate in Hz as kHz. Zero (unknown) renders "—".

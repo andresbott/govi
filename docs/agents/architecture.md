@@ -33,6 +33,11 @@ knowledge stays in `app/cmd`; `AppCfg.toPlayerConfig()` produces the plain
   keymap (dispatch), the help overlay (rows), and the context menu (entries).
   Never add a shortcut, menu entry, or help row that bypasses the registry —
   the whole design exists so these can't drift apart.
+  **Adding an action means three edits in `app/cmd/config.go` too**, none of
+  which the compiler enforces: a `ShortcutsCfg` field, an entry in
+  `knownActions` (or the config is rejected as a typo), and an `add(...)` call
+  in `toPlayerConfig` (or the override loads and is silently dropped).
+  `TestEveryKnownActionReachesPlayerConfig` covers the last two.
 - **sRGB double-gamma fix** (commit 8d55a47): the backbuffer stays *linear*
   because mpv already outputs sRGB-encoded pixels. Desktop GL (macOS) and GLES
   (everywhere else) handle this differently — see the long comments in
