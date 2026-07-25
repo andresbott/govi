@@ -24,7 +24,7 @@ COVERAGE_THRESHOLD ?= 70
 .PHONY: coverage
 coverage: ## check test coverage meets the threshold (excluded: metainfo = linker-stamped vars only, player = GL/mpv glue needing a display)
 	@fail=0; \
-	for pkg in $$(go list ./app/... 2>/dev/null | grep -v '/app/metainfo$$' | grep -v '/app/player$$'); do \
+	for pkg in $$(go list ./app/... ./libs/... 2>/dev/null | grep -v '/app/metainfo$$' | grep -v '/app/player$$'); do \
 		go test -coverprofile=coverage.out -covermode=atomic $$pkg > /dev/null; \
 		if [ -f coverage.out ]; then \
 			coverage=$$(go tool cover -func=coverage.out | grep total: | awk '{print $$3}' | sed 's/%//'); \

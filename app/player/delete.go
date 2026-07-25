@@ -7,7 +7,8 @@ import (
 	"gioui.org/layout"
 	"gioui.org/unit"
 	"gioui.org/widget/material"
-	trash "github.com/hymkor/trash-go"
+
+	"github.com/andresbott/govi/libs/trash"
 )
 
 // currentPath returns the loaded file's path, or "" when idle / unavailable.
@@ -18,16 +19,36 @@ func (p *Player) currentPath() string {
 	return p.propStr("path")
 }
 
+// removalSucceeded reports whether path is really gone, so the playlist only
+// advances past a file that was actually removed. The filesystem is checked in
+// addition to err because a backend can report success while leaving the file in
+// place (e.g. a copy succeeded but the unlink did not); advancing then hides a
+// file that is still on disk.
+func removalSucceeded(path string, err error) bool {
+	if err != nil {
+		return false
+	}
+	_, statErr := os.Lstat(path)
+	return os.IsNotExist(statErr)
+}
+
 // moveToTrash stops playback and moves the current file to the OS trash.
 // No confirmation: the file is recoverable from the trash.
+//
+// This runs synchronously on the main loop, which is safe because trashing is
+// always a rename within one filesystem — libs/trash refuses to copy across
+// devices rather than blocking on a multi-gigabyte transfer.
 func (p *Player) moveToTrash() {
 	path := p.currentPath()
 	if path == "" {
 		return
 	}
 	p.stop()
-	if err := trash.Throw(path); err != nil {
+	err := trash.Move(path)
+	if err != nil {
 		p.log.Error("move to trash", "path", path, "err", err)
+	}
+	if !removalSucceeded(path, err) {
 		return
 	}
 	p.log.Info("moved to trash", "path", path)
@@ -61,8 +82,11 @@ func (p *Player) deleteConfirmed() {
 		return
 	}
 	p.stop()
-	if err := os.Remove(path); err != nil {
+	err := os.Remove(path)
+	if err != nil {
 		p.log.Error("delete file", "path", path, "err", err)
+	}
+	if !removalSucceeded(path, err) {
 		return
 	}
 	p.log.Info("deleted file", "path", path)

@@ -17,7 +17,7 @@ have a chosen direction. See [architecture.md](architecture.md) for layering,
 | Action registry (19 actions: play-pause, stop, seek ± 5 s, seek ± 10 %, volume ±, mute, progress, info, help, fullscreen, next/previous-video, move-to-trash, delete-file, preferences, quit) | `app/player/actions.go` |
 | Two seek granularities: ±5 s on `left`/`right` (`seek … relative`), ±10 % of the duration on `shift+left`/`shift+right` (`seek … relative-percent`, so mpv derives the offset and a live stream is a no-op rather than a bogus jump); both flash progress | `app/player/seek.go`, registry in `actions.go` |
 | Preferences overlay: rebind shortcuts by clicking a slot and pressing a key, `×` clears a slot, `←` on an empty slot restores that action's defaults; persists to config.yaml (`shortcuts:` section rewritten, comments not preserved; Esc not bindable via UI, editable in YAML) | `app/player/overlay_prefs.go`, save in `app/cmd/config.go` (`saveShortcuts`) |
-| Move-to-trash + permanent delete with Enter/Esc confirmation overlay (unbound by default, not in menu; user must bind keys) | `app/player/delete.go`, confirm handling in `input.go` |
+| Move-to-trash + permanent delete with Enter/Esc confirmation overlay (unbound by default, not in menu; user must bind keys) | `app/player/delete.go`, confirm handling in `input.go`, OS trash in `libs/trash` |
 | Esc context sensitivity (close overlay → exit fullscreen → bound action) | `app/player/input.go` key callback |
 | Info overlay (mpv props, 1 s refresh, `—` for unavailable) | `app/player/overlay_info.go`, formatters in `format.go` |
 | Help overlay (generated from registry + effective keymap) | `app/player/overlay_help.go` |

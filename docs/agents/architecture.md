@@ -20,6 +20,7 @@ main.go → app/cmd (cobra CLI, config load/validate)
           app/player (GLFW + GL + libmpv + Gio; everything user-visible)
           app/metainfo (linker-stamped version vars only)
           internal/logging (slog + trace level + mpv level mapping)
+          libs/trash (OS trash; no govi dependencies, reusable standalone)
 ```
 
 **Invariant: `app/player` must NOT import bumbu or YAML.** All config-library
@@ -57,6 +58,16 @@ knowledge stays in `app/cmd`; `AppCfg.toPlayerConfig()` produces the plain
   YAML (`validateShortcutNames`) because bumbu silently drops unknown fields.
   Bad config is startup-fatal, naming the offending entry; a missing file is
   silent defaults.
+- **Trash is per-OS native, and never copies** (`libs/trash`): Windows uses
+  `SHFileOperationW` with `FOF_ALLOWUNDO`, macOS `-[NSFileManager
+  trashItemAtURL:]` via cgo (the only way to get Finder's "Put Back"), Linux/BSD
+  the FreeDesktop spec *including* per-volume `.Trash-$uid` — so trashing from a
+  Samba/NFS/USB mount is a rename on that mount, not a copy to `$HOME`. A
+  cross-device trash **fails** rather than transferring data, which is what keeps
+  `moveToTrash` safe to call synchronously on the main loop. The previous
+  dependency (`hymkor/trash-go`) did the opposite: home-trash only, silent
+  copy-then-delete across devices, and it reported success when the source
+  could not be unlinked.
 - **Threading model** — three rules, all load-bearing (details in
   [player.md](player.md)): the main OS thread is locked for GLFW/GL; mpv's
   render callback only sets an atomic flag and posts an empty event; one
