@@ -8,23 +8,25 @@ import "time"
 type actionID string
 
 const (
-	actPlayPause   actionID = "play-pause"
-	actStop        actionID = "stop"
-	actSeekForward actionID = "seek-forward"
-	actSeekBack    actionID = "seek-back"
-	actVolumeUp    actionID = "volume-up"
-	actVolumeDown  actionID = "volume-down"
-	actMute        actionID = "mute"
-	actProgress    actionID = "progress"
-	actInfo        actionID = "info"
-	actHelp        actionID = "help"
-	actPreferences actionID = "preferences"
-	actFullscreen  actionID = "fullscreen"
-	actNextVideo   actionID = "next-video"
-	actPrevVideo   actionID = "previous-video"
-	actTrash       actionID = "move-to-trash"
-	actDelete      actionID = "delete-file"
-	actQuit        actionID = "quit"
+	actPlayPause      actionID = "play-pause"
+	actStop           actionID = "stop"
+	actSeekForward    actionID = "seek-forward"
+	actSeekBack       actionID = "seek-back"
+	actSeekForwardPct actionID = "seek-forward-percent"
+	actSeekBackPct    actionID = "seek-back-percent"
+	actVolumeUp       actionID = "volume-up"
+	actVolumeDown     actionID = "volume-down"
+	actMute           actionID = "mute"
+	actProgress       actionID = "progress"
+	actInfo           actionID = "info"
+	actHelp           actionID = "help"
+	actPreferences    actionID = "preferences"
+	actFullscreen     actionID = "fullscreen"
+	actNextVideo      actionID = "next-video"
+	actPrevVideo      actionID = "previous-video"
+	actTrash          actionID = "move-to-trash"
+	actDelete         actionID = "delete-file"
+	actQuit           actionID = "quit"
 )
 
 // action is one entry in the registry. defaults holds the built-in key
@@ -52,8 +54,10 @@ type action struct {
 }
 
 // Repeat intervals for held-down keys. repeatContinuous is effectively "as
-// fast as the OS repeats" for cheap actions (seek, volume nudge);
-// repeatNavigate is deliberately slower because each fire loads a new file.
+// fast as the OS repeats" for cheap, small-step actions (5 s seek, volume
+// nudge); repeatNavigate is deliberately slower for actions that move a long
+// way per fire — next/previous load a whole new file, and a held percentage
+// seek would otherwise run off the end of the video before the key is released.
 const (
 	repeatContinuous = 50 * time.Millisecond
 	repeatNavigate   = 300 * time.Millisecond
@@ -67,6 +71,8 @@ func defaultActions() []action {
 		{actStop, "Stop", nil, (*Player).stop, true, 0},
 		{actSeekForward, "Seek Forward", []string{"right"}, func(p *Player) { p.seek(5) }, false, repeatContinuous},
 		{actSeekBack, "Seek Back", []string{"left"}, func(p *Player) { p.seek(-5) }, false, repeatContinuous},
+		{actSeekForwardPct, "Seek Forward 10%", []string{"shift+right"}, func(p *Player) { p.seekPercent(seekPercentStep) }, false, repeatNavigate},
+		{actSeekBackPct, "Seek Back 10%", []string{"shift+left"}, func(p *Player) { p.seekPercent(-seekPercentStep) }, false, repeatNavigate},
 		{actVolumeUp, "Volume Up", []string{"up", "+"}, func(p *Player) { p.changeVolume(5) }, true, repeatContinuous},
 		{actVolumeDown, "Volume Down", []string{"down", "-"}, func(p *Player) { p.changeVolume(-5) }, true, repeatContinuous},
 		{actMute, "Mute", []string{"m"}, (*Player).toggleMute, true, 0},

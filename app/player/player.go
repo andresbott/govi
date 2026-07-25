@@ -537,17 +537,6 @@ func (p *Player) stop() {
 	}
 }
 
-// seek moves playback position by delta seconds (negative = backwards),
-// relative to the current position, and flashes the resulting progress. mpv
-// ignores it when no file is loaded.
-func (p *Player) seek(delta int) {
-	if err := p.mpv.Command([]string{"seek", fmt.Sprintf("%d", delta), "relative"}); err != nil {
-		p.log.Error("mpv seek", "delta", delta, "err", err)
-		return
-	}
-	p.flashProgress()
-}
-
 // showProgress flashes the current playback progress on demand (its own
 // action), so the position is reachable without disturbing playback.
 func (p *Player) showProgress() {

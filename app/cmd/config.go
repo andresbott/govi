@@ -16,23 +16,25 @@ import (
 // specifies. A nil/empty slice means "not configured" and the player applies
 // its built-in default.
 type ShortcutsCfg struct {
-	PlayPause   []string `config:"play-pause"`
-	Stop        []string `config:"stop"`
-	VolumeUp    []string `config:"volume-up"`
-	VolumeDown  []string `config:"volume-down"`
-	Mute        []string `config:"mute"`
-	Progress    []string `config:"progress"`
-	Info        []string `config:"info"`
-	Help        []string `config:"help"`
-	Fullscreen  []string `config:"fullscreen"`
-	Quit        []string `config:"quit"`
-	SeekForward []string `config:"seek-forward"`
-	SeekBack    []string `config:"seek-back"`
-	NextVideo   []string `config:"next-video"`
-	PrevVideo   []string `config:"previous-video"`
-	Trash       []string `config:"move-to-trash"`
-	Delete      []string `config:"delete-file"`
-	Preferences []string `config:"preferences"`
+	PlayPause      []string `config:"play-pause"`
+	Stop           []string `config:"stop"`
+	VolumeUp       []string `config:"volume-up"`
+	VolumeDown     []string `config:"volume-down"`
+	Mute           []string `config:"mute"`
+	Progress       []string `config:"progress"`
+	Info           []string `config:"info"`
+	Help           []string `config:"help"`
+	Fullscreen     []string `config:"fullscreen"`
+	Quit           []string `config:"quit"`
+	SeekForward    []string `config:"seek-forward"`
+	SeekBack       []string `config:"seek-back"`
+	SeekForwardPct []string `config:"seek-forward-percent"`
+	SeekBackPct    []string `config:"seek-back-percent"`
+	NextVideo      []string `config:"next-video"`
+	PrevVideo      []string `config:"previous-video"`
+	Trash          []string `config:"move-to-trash"`
+	Delete         []string `config:"delete-file"`
+	Preferences    []string `config:"preferences"`
 }
 
 // AppCfg is the on-disk configuration.
@@ -49,7 +51,9 @@ var knownActions = map[string]bool{
 	"play-pause": true, "stop": true, "volume-up": true, "volume-down": true,
 	"mute": true, "progress": true, "info": true, "help": true,
 	"fullscreen": true, "quit": true,
-	"seek-forward": true, "seek-back": true, "next-video": true,
+	"seek-forward": true, "seek-back": true,
+	"seek-forward-percent": true, "seek-back-percent": true,
+	"next-video":     true,
 	"previous-video": true, "move-to-trash": true, "delete-file": true,
 	"preferences": true,
 }
@@ -126,6 +130,8 @@ func (c AppCfg) toPlayerConfig() player.Config {
 	add("quit", c.Shortcuts.Quit)
 	add("seek-forward", c.Shortcuts.SeekForward)
 	add("seek-back", c.Shortcuts.SeekBack)
+	add("seek-forward-percent", c.Shortcuts.SeekForwardPct)
+	add("seek-back-percent", c.Shortcuts.SeekBackPct)
 	add("next-video", c.Shortcuts.NextVideo)
 	add("previous-video", c.Shortcuts.PrevVideo)
 	add("move-to-trash", c.Shortcuts.Trash)
