@@ -1,0 +1,24 @@
+[Desktop Entry]
+Type=Application
+Version=1.1
+Name=govi
+GenericName=Video Player
+Comment=Minimalistic video player based on mpv
+Exec=govi %f
+Icon=govi
+Terminal=false
+Categories=AudioVideo;Video;Player;
+Keywords=video;player;mpv;movie;film;
+# govi takes at most one file argument, so %f (single local path) instead of %F,
+# and no %u: a file:// URI would defeat the sibling-folder playlist scan.
+# Covers the extensions in videoExts (app/player/playlist.go). Canonical
+# shared-mime-info names first, with the widely used legacy aliases kept so
+# older file managers still match: video/vnd.avi = video/x-msvideo,
+# application/vnd.ms-asf = video/x-ms-asf, .m4v/.vob resolve to
+# video/mp4 / video/mpeg.
+MimeType=video/mp4;video/x-matroska;video/webm;video/vnd.avi;video/x-msvideo;video/quicktime;video/x-ms-wmv;video/x-flv;video/mpeg;video/mp2t;video/ogg;video/3gpp;video/3gpp2;application/vnd.ms-asf;video/x-ms-asf;video/x-ogm+ogg;
+# glfw has no startup-notification support, so the launcher must not wait for an
+# ID that never arrives; it matches the window by WM_CLASS instead (see
+# initWindow in app/player/player.go).
+StartupNotify=false
+StartupWMClass=govi

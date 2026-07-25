@@ -21,6 +21,7 @@ type ShortcutsCfg struct {
 	VolumeUp    []string `config:"volume-up"`
 	VolumeDown  []string `config:"volume-down"`
 	Mute        []string `config:"mute"`
+	Progress    []string `config:"progress"`
 	Info        []string `config:"info"`
 	Help        []string `config:"help"`
 	Fullscreen  []string `config:"fullscreen"`
@@ -46,7 +47,8 @@ type AppCfg struct {
 // id, or a config saved from the preferences screen would fail to load.
 var knownActions = map[string]bool{
 	"play-pause": true, "stop": true, "volume-up": true, "volume-down": true,
-	"mute": true, "info": true, "help": true, "fullscreen": true, "quit": true,
+	"mute": true, "progress": true, "info": true, "help": true,
+	"fullscreen": true, "quit": true,
 	"seek-forward": true, "seek-back": true, "next-video": true,
 	"previous-video": true, "move-to-trash": true, "delete-file": true,
 	"preferences": true,
@@ -117,6 +119,7 @@ func (c AppCfg) toPlayerConfig() player.Config {
 	add("volume-up", c.Shortcuts.VolumeUp)
 	add("volume-down", c.Shortcuts.VolumeDown)
 	add("mute", c.Shortcuts.Mute)
+	add("progress", c.Shortcuts.Progress)
 	add("info", c.Shortcuts.Info)
 	add("help", c.Shortcuts.Help)
 	add("fullscreen", c.Shortcuts.Fullscreen)

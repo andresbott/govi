@@ -32,6 +32,31 @@ path, cfg)` — empty path starts on the idle screen. See
    `ctx.Done()` so the wait doesn't delay exit; that is the one other
    thread-safe GLFW call allowed off the main loop.
 
+## Playlist and prefetch
+
+- `scanPlaylist` reads the folder **once** per opened file (`setPlaylist`, from
+  `Run` and `openFile`); next/previous only move `pl.idx` in the in-memory
+  slice plus one `os.Stat` liveness check per candidate. Files added to the
+  folder after opening deliberately do not appear — deletions are handled
+  (skipped and dropped), additions are not.
+- `prefetcher` (`prefetch.go`) warms the OS page cache for `pl.neighbors()`
+  (next first, then previous) after every playlist change, so the demuxer finds
+  the container header and trailing index in memory. It reads the first 2 MiB
+  and last 256 KiB read-only and discards the bytes; nothing is written.
+- Each `pf.start` cancels the previous generation, so holding down
+  next/previous does not pile up reads for files the user already skipped.
+  `Run` defers `pf.stop()` so no warm-up outlives the player.
+- The warm goroutines touch **no** `Player` state — that is what keeps them
+  compatible with threading invariant 5. Keep it that way: if a prefetch ever
+  needs to report back, route it through an atomic or the loop, not by writing
+  to `Player` fields. `prefetcher.warm` is injectable purely so tests can
+  record paths instead of doing I/O.
+- Expected payoff is storage-dependent, and measuring is the only way to know:
+  on a local SSD with a warm cache the cold header read is ~2 ms, so this saves
+  little; on HDD, USB, or network mounts (NFS/SMB/sshfs) the same read is the
+  dominant switch cost. Do not "optimize" this away based on a fast local disk
+  — the same reasoning as the hwdec probe order in `AGENTS.md`.
+
 ## Rendering invariants
 
 - **Backbuffer stays linear** — mpv outputs sRGB-encoded pixels already; an
@@ -55,8 +80,16 @@ GLFW callbacks forward pointer events to Gio's router; unconsumed events fall
 through to player behavior (`registerCallbacks` in `input.go`):
 
 - Key press → Esc special-casing first (close overlay → exit fullscreen →
-  fall through), then `keyChord` lookup in `p.keymap` → registry `fn`.
-  Lock modifiers are stripped (`relevantMods`).
+  fall through), then `keyChord` lookup in `p.keymap` → registry `fn`
+  (`dispatchKey`). Lock modifiers are stripped (`relevantMods`).
+- `glfw.Repeat` events (key held down) reach `dispatchKey` too, but only fire
+  actions whose registry `repeat` interval is non-zero, and no more often than
+  that interval (`p.lastRepeat` per action). The throttle is not optional: the
+  repeat rate is an OS setting, so an unthrottled next-video would race through
+  a folder. Esc/confirm handling stays press-only, so holding Esc cannot
+  double-confirm a delete. **Never give a destructive or toggling action a
+  repeat interval** — quit, delete, trash, play-pause, fullscreen and mute must
+  stay press-only.
 - While a preferences binding slot is capturing, the preferences window's key
   callback routes to `handleCaptureKey` (`overlay_prefs.go`) before anything
   else: Esc cancels, every other key binds (validated by round-tripping
@@ -77,6 +110,13 @@ through to player behavior (`registerCallbacks` in `input.go`):
 - `overlayKind`: exactly one of info/help/menu/confirm/prefs open; opening one closes the
   others (`toggleOverlay`). All panels share `panelBG` (alpha `0xb0`) via
   `drawPanel`/`rowGrid` in `overlay.go`.
+- The status flash (`osd.go`) is *not* an `overlayKind`: it is time-bounded, not
+  toggled, and coexists with whatever overlay is open. `layoutUI` draws it
+  before the overlay switch so a panel wins any shared pixel. It needs no
+  invalidation because the loop already renders every `idleFrame`; if that ever
+  becomes event-driven, the flash needs a wakeup. `layout.S` only relaxes
+  `Min.Y`, so `layoutOSD` zeroes `Constraints.Min` — otherwise the panel reports
+  full window width and sits flush left instead of centered.
 - Info overlay reads mpv props into `infoCache` at most once per second
   (loop-driven, `player.go`); cache is dropped when closed.
 - Help overlay derives rows from `defaultActions()` + effective keymap at

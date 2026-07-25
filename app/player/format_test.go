@@ -39,6 +39,27 @@ func TestHumanBitrate(t *testing.T) {
 	}
 }
 
+func TestHumanClock(t *testing.T) {
+	tests := []struct {
+		in   float64
+		want string
+	}{
+		{0, "0:00"},
+		{9, "0:09"},
+		{59.9, "0:59"}, // truncated, never rounded up to :60
+		{60, "1:00"},
+		{125, "2:05"},
+		{3600, "1:00:00"},
+		{3661, "1:01:01"},
+		{-5, "0:00"}, // mpv can report a small negative time-pos
+	}
+	for _, tt := range tests {
+		if got := humanClock(tt.in); got != tt.want {
+			t.Errorf("humanClock(%v) = %q, want %q", tt.in, got, tt.want)
+		}
+	}
+}
+
 func TestHumanRate(t *testing.T) {
 	tests := []struct {
 		in   float64
