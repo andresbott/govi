@@ -1,0 +1,69 @@
+version: 2
+before:
+  hooks:
+    - go mod tidy
+builds:
+  # =====================================================================================
+  # linux-only CGO build: govi links against libmpv via cgo, so no cross-compiled
+  # darwin targets and no CGO_ENABLED=0
+  # =====================================================================================
+  - id: govi
+    goos:
+      - linux
+    goarch:
+      - amd64
+    env:
+      - CGO_ENABLED=1
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+      - -X github.com/andresbott/govi/app/metainfo.Version={{.Version}}
+      - -X github.com/andresbott/govi/app/metainfo.BuildTime={{.Date}}
+      - -X github.com/andresbott/govi/app/metainfo.ShaVer={{.Commit}}
+    binary: govi
+
+archives:
+  - formats: [tar.gz]
+    # this name template makes the OS and Arch compatible with the results of uname.
+    name_template: >-
+      govi_
+      {{- title .Os }}_
+      {{- if eq .Arch "amd64" }}x86_64
+      {{- else if eq .Arch "386" }}i386
+      {{- else }}{{ .Arch }}{{ end }}
+      {{- if .Arm }}v{{ .Arm }}{{ end }}
+    files:
+      - LICENSE
+      - README.md
+
+nfpms:
+  # build a .deb for linux (libmpv is a runtime dependency)
+  - id: govi
+    package_name: govi
+    ids:
+      - govi
+    formats:
+      - deb
+    maintainer: "Andres Bott <contact@andresbott.com>"
+    homepage: "https://github.com/andresbott/govi"
+    description: "Minimalistic video player based on mpv"
+    license: "GPL-3.0"
+    section: video
+    priority: optional
+    dependencies:
+      - libmpv2
+    contents:
+      - src: LICENSE
+        dst: /usr/share/doc/govi/copyright
+
+checksum:
+  name_template: 'checksums.txt'
+snapshot:
+  version_template: "{{ incpatch .Version }}-snapshot"
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - '^docs:'
+      - '^test:'
