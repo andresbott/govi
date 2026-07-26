@@ -93,19 +93,21 @@ func (p *Player) nextVideo() { p.playAdjacent(1) }
 // prevVideo plays the previous sibling video in the playlist, if any.
 func (p *Player) prevVideo() { p.playAdjacent(-1) }
 
-// playAdjacent advances the playlist by dir and loads the resulting file.
-// Entries deleted behind the player's back are skipped and dropped.
-func (p *Player) playAdjacent(dir int) {
+// playAdjacent advances the playlist by dir and loads the resulting file,
+// reporting whether it moved. Entries deleted behind the player's back are
+// skipped and dropped.
+func (p *Player) playAdjacent(dir int) bool {
 	if p.pl == nil {
-		return
+		return false
 	}
 	next := p.pl.advance(dir, fileExists)
 	if next == "" {
-		return
+		return false
 	}
 	p.loadFile(next)
 	p.flashPosition()
 	p.pf.start(p.pl.neighbors())
+	return true
 }
 
 // fileExists is playlist.advance's liveness check for real files.

@@ -86,6 +86,8 @@ func TestLoadConfigSupportsAllRegistryActions(t *testing.T) {
 	path := writeTemp(t, `shortcuts:
   seek-forward: ["l"]
   seek-back: ["j"]
+  seek-forward-percent: ["shift+l"]
+  seek-back-percent: ["shift+j"]
   next-video: ["n"]
   previous-video: ["b"]
   move-to-trash: ["t"]
@@ -99,7 +101,9 @@ func TestLoadConfigSupportsAllRegistryActions(t *testing.T) {
 	}
 	pc := cfg.toPlayerConfig()
 	want := map[string]string{
-		"seek-forward": "l", "seek-back": "j", "next-video": "n",
+		"seek-forward": "l", "seek-back": "j",
+		"seek-forward-percent": "shift+l", "seek-back-percent": "shift+j",
+		"next-video": "n",
 		"previous-video": "b", "move-to-trash": "t", "delete-file": "shift+d",
 		"preferences": "p", "progress": "o",
 	}

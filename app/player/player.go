@@ -126,6 +126,11 @@ type Player struct {
 	// idle mirrors mpv's idle-active property (no file loaded), published
 	// from the mpv event goroutine and read by the render loop / overlay.
 	idle atomic.Bool
+
+	// eofPending is set from the mpv event goroutine when the current file
+	// ended on its own (see autoadvance.go) and consumed on the main loop,
+	// which then plays the next playlist entry.
+	eofPending atomic.Bool
 }
 
 // overlayKind is which single overlay (if any) is currently shown.
@@ -406,6 +411,11 @@ func (p *Player) loop(ctx context.Context) error {
 		}
 		p.syncPrefsWindow()
 
+		// Continue with the next video when the current one ended (played
+		// through, or seeked past its end). Done here rather than in the event
+		// pump so loadfile stays on the main loop.
+		p.handleEndOfFile()
+
 		// Acknowledge mpv's update flag when a new video frame is ready.
 		if p.needsRender.CompareAndSwap(true, false) {
 			p.render.Update()
@@ -520,6 +530,11 @@ func (p *Player) setPlaylist(path string) {
 // playlist navigation itself). Errors are logged, not fatal: mpv emits its
 // own error and returns to idle for unplayable files.
 func (p *Player) loadFile(path string) {
+	// Any pending end-of-file belongs to the file being replaced: the user (or
+	// an auto-advance already handled) picked this one, so the loop must not
+	// advance again on top of it and skip an entry. Done before the mpv guard
+	// so the flag is dropped even on the test path.
+	p.eofPending.Store(false)
 	if p.mpv == nil { // unit tests build a Player without mpv
 		return
 	}
@@ -535,17 +550,6 @@ func (p *Player) stop() {
 	if err := p.mpv.Command([]string{"stop"}); err != nil {
 		p.log.Error("mpv stop", "err", err)
 	}
-}
-
-// seek moves playback position by delta seconds (negative = backwards),
-// relative to the current position, and flashes the resulting progress. mpv
-// ignores it when no file is loaded.
-func (p *Player) seek(delta int) {
-	if err := p.mpv.Command([]string{"seek", fmt.Sprintf("%d", delta), "relative"}); err != nil {
-		p.log.Error("mpv seek", "delta", delta, "err", err)
-		return
-	}
-	p.flashProgress()
 }
 
 // showProgress flashes the current playback progress on demand (its own

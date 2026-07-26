@@ -65,6 +65,29 @@ func TestBuildKeymapDefaults(t *testing.T) {
 	}
 }
 
+// The coarse (percentage) seek shares the arrow keys with the fine seek and is
+// told apart by Shift, so both must survive in the same keymap.
+func TestBuildKeymapDefaultsSeekVariants(t *testing.T) {
+	km, err := buildKeymap(nil)
+	if err != nil {
+		t.Fatalf("buildKeymap(nil): %v", err)
+	}
+	tests := []struct {
+		chord keyChord
+		want  actionID
+	}{
+		{keyChord{glfw.KeyRight, 0}, actSeekForward},
+		{keyChord{glfw.KeyLeft, 0}, actSeekBack},
+		{keyChord{glfw.KeyRight, glfw.ModShift}, actSeekForwardPct},
+		{keyChord{glfw.KeyLeft, glfw.ModShift}, actSeekBackPct},
+	}
+	for _, tt := range tests {
+		if got := km[tt.chord]; got != tt.want {
+			t.Errorf("%s -> %q, want %q", chordLabel(tt.chord), got, tt.want)
+		}
+	}
+}
+
 func TestBuildKeymapWholesaleOverride(t *testing.T) {
 	// Overriding play-pause with a single key leaves the secondary UNBOUND:
 	// the default "k" must not survive.

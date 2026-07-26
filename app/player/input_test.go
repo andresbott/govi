@@ -73,7 +73,8 @@ func TestDispatchKeyUnboundChordIsNoop(t *testing.T) {
 
 func TestNavigationAndVolumeActionsRepeat(t *testing.T) {
 	byID := actionByID()
-	for _, id := range []actionID{actNextVideo, actPrevVideo, actVolumeUp, actVolumeDown, actSeekForward, actSeekBack} {
+	for _, id := range []actionID{actNextVideo, actPrevVideo, actVolumeUp, actVolumeDown,
+		actSeekForward, actSeekBack, actSeekForwardPct, actSeekBackPct} {
 		if byID[id].repeat == 0 {
 			t.Errorf("%q should keep firing while its key is held down", id)
 		}
