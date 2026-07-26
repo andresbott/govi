@@ -51,6 +51,10 @@ appear in the launcher and in the file manager's "Open with" list.
   `for s in 32 48 64 128 256; do inkscape -w $s -h $s zarf/govi.svg -o zarf/govi-$s.png; done`
   (`rsvg-convert -w $s -h $s` works too). They are committed, so no build-time
   dependency on either tool.
+- `zarf/govi.svg` is the flattened, Inkscape-metadata-free form of the artwork
+  in `zarf/design/icon.svg` — the same play glyph as the idle-screen logo
+  (`app/player/assets/logo.png`, exported from the same design file). Re-export
+  both when the artwork changes so the launcher icon and the idle screen agree.
 
 ## License gate
 

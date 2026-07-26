@@ -41,7 +41,22 @@ type ShortcutsCfg struct {
 type AppCfg struct {
 	Shortcuts        ShortcutsCfg `config:"shortcuts"`
 	PlaceholderImage string       `config:"placeholderImage"`
+	Volume           int          `config:"volume"`
+	Muted            bool         `config:"muted"`
 }
+
+// volumeUnset marks "no saved volume", so an absent key stays distinguishable
+// from a configured 0 — otherwise a config that never mentions the volume would
+// look like saved silence and every fresh install would start muted. loadConfig
+// seeds Volume with it and bumbu only overwrites fields it actually found (in the
+// file or in a GOVI_VOLUME env var), so the sentinel survives exactly when the
+// user set nothing. A pointer field cannot do this job: bumbu allocates nil
+// pointers before unmarshalling, so an absent key would come back as a set 0.
+//
+// The cost is that a literal `volume: -1` reads as unset rather than as 0. It is
+// out of range either way (the player clamps into 0..volumeMax), so mpv's own
+// default is a fair reading of it.
+const volumeUnset = -1
 
 // knownActions lists every valid shortcut key name, used to reject typos in
 // the config file (bumbu silently drops unknown struct fields, so this check
@@ -70,7 +85,8 @@ func defaultConfigPath() (string, error) {
 // loadConfig loads configuration from path (missing file = defaults) with env
 // overrides under the GOVI_ prefix, after validating shortcut action names.
 func loadConfig(path string) (AppCfg, error) {
-	var cfg AppCfg
+	// Seeded rather than zero: see volumeUnset.
+	cfg := AppCfg{Volume: volumeUnset}
 	if err := validateShortcutNames(path); err != nil {
 		return cfg, err
 	}
@@ -137,7 +153,29 @@ func (c AppCfg) toPlayerConfig() player.Config {
 	add("move-to-trash", c.Shortcuts.Trash)
 	add("delete-file", c.Shortcuts.Delete)
 	add("preferences", c.Shortcuts.Preferences)
-	return player.Config{Shortcuts: sc, PlaceholderImage: c.PlaceholderImage}
+	pc := player.Config{
+		Shortcuts:        sc,
+		PlaceholderImage: c.PlaceholderImage,
+		Muted:            c.Muted,
+	}
+	// nil is how the player hears "no saved level, keep mpv's default".
+	if c.Volume != volumeUnset {
+		vol := c.Volume
+		pc.Volume = &vol
+	}
+	return pc
+}
+
+// saveAudioState rewrites the `volume:` and `muted:` keys of the config file at
+// path, preserving every other top-level key (including `shortcuts:`, which
+// saveShortcuts owns — the two writers share one file and neither may drop what
+// the other stored). Same mechanics as saveShortcuts: comments are not preserved,
+// a missing file or directory is created, and the write is atomic.
+func saveAudioState(path string, volume int, muted bool) error {
+	return updateConfig(path, func(doc map[string]any) {
+		doc["volume"] = volume
+		doc["muted"] = muted
+	})
 }
 
 // saveShortcuts rewrites the `shortcuts:` section of the config file at path,
@@ -145,6 +183,21 @@ func (c AppCfg) toPlayerConfig() player.Config {
 // is re-marshalled). A missing file or directory is created; the write is
 // atomic (temp file + rename).
 func saveShortcuts(path string, shortcuts map[string][]string) error {
+	return updateConfig(path, func(doc map[string]any) {
+		if len(shortcuts) == 0 {
+			delete(doc, "shortcuts")
+		} else {
+			doc["shortcuts"] = shortcuts
+		}
+	})
+}
+
+// updateConfig applies edit to the config file at path as a whole YAML document,
+// so a writer touching one section leaves every other top-level key intact — the
+// property both savers depend on, since they write the same file at different
+// times. Comments are not preserved (the file is re-marshalled). A missing file or
+// directory is created; the write is atomic (temp file + rename).
+func updateConfig(path string, edit func(doc map[string]any)) error {
 	doc := map[string]any{}
 	b, err := os.ReadFile(filepath.Clean(path))
 	if err == nil {
@@ -154,11 +207,7 @@ func saveShortcuts(path string, shortcuts map[string][]string) error {
 	} else if !os.IsNotExist(err) {
 		return fmt.Errorf("read config %q: %w", path, err)
 	}
-	if len(shortcuts) == 0 {
-		delete(doc, "shortcuts")
-	} else {
-		doc["shortcuts"] = shortcuts
-	}
+	edit(doc)
 	out, err := yaml.Marshal(doc)
 	if err != nil {
 		return fmt.Errorf("marshal config: %w", err)

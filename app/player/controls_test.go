@@ -237,14 +237,14 @@ func TestFadeColorClamps(t *testing.T) {
 func TestControlIconsDecode(t *testing.T) {
 	// The icons are compiled-in material design paths; a decode failure is a
 	// build bug, and a nil icon would panic at layout time (no display needed to
-	// catch it here).
+	// catch it here). The volume glyphs are covered by TestVolumeIconsDecode,
+	// next to the state that picks between them.
 	tests := []struct {
 		name string
 		icon func() bool
 	}{
 		{"play", func() bool { return iconPlay != nil }},
 		{"pause", func() bool { return iconPause != nil }},
-		{"volume", func() bool { return iconVolume != nil }},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

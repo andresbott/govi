@@ -38,6 +38,12 @@ const (
 	appID         = "govi"
 	initialWidth  = 1280
 	initialHeight = 720
+	// minWidth/minHeight floor the video window. Square and small: the video is
+	// letterboxed to fit whatever the aspect ratio, so nothing here breaks at a
+	// small size — this only stops the window collapsing to a sliver, where the
+	// control bar would have no room to draw.
+	minWidth  = 240
+	minHeight = 240
 	// idleFrame caps how long the loop sleeps when no video frame or input
 	// arrives, so the Gio overlay keeps animating even while paused.
 	idleFrame = 0.05
@@ -64,6 +70,7 @@ type Player struct {
 	theme  *material.Theme
 
 	placeholderSrc paint.ImageOp
+	logoSrc        paint.ImageOp
 	paused         bool
 	muted          bool
 	overlay        overlayKind
@@ -104,9 +111,9 @@ type Player struct {
 	infoCache       []infoSection
 	infoRefreshedAt time.Time
 
-	// osdText is the transient status flash (volume level, playlist position)
-	// drawn until osdUntil passes; see osd.go. Playback progress is not among
-	// them — the control bar reports that (controls.go).
+	// osdText is the transient status flash (playlist position — its only user
+	// now) drawn until osdUntil passes; see osd.go. Playback progress and the
+	// volume are not among them — the control bar reports both (controls.go).
 	osdText  string
 	osdUntil time.Time
 
@@ -114,15 +121,24 @@ type Player struct {
 	// throttled to the action's own repeat interval (see dispatchKey).
 	lastRepeat map[actionID]time.Time
 
-	// control-bar state (see controls.go): the seek bar's knob position, the
-	// two buttons, when pointer input last arrived (the bar auto-hides
-	// controlsHideAfter later) and the fade-in's origin. Zero lastInput means the
-	// pointer has not moved yet, so the bar starts hidden.
+	// control-bar state (see controls.go): the seek and volume sliders' knob
+	// positions, the two buttons, when pointer input last arrived (the bar
+	// auto-hides controlsHideAfter later) and the fade-in's origin. Zero lastInput
+	// means the pointer has not moved yet, so the bar starts hidden.
 	progress   widget.Float
+	volume     widget.Float
 	playBtn    widget.Clickable
 	volumeBtn  widget.Clickable
 	lastInput  time.Time
 	revealedAt time.Time
+
+	// volume persistence (see volume.go): saveAudioState writes the level and
+	// mute flag to disk, injected by app/cmd so the player stays YAML-free.
+	// volumeSavePending is when the level last changed; the loop writes it out
+	// once it has been still for volumeSaveDelay, so a drag does not rewrite the
+	// config on every pointer move. Zero means nothing is waiting to be saved.
+	saveAudioState    func(volume int, muted bool) error
+	volumeSavePending time.Time
 
 	// windowed geometry remembered while fullscreen, restored on exit.
 	winX, winY, winW, winH int
@@ -141,9 +157,10 @@ type Player struct {
 	eofPending atomic.Bool
 
 	// obsPos/obsDur are the observed playback position and duration
-	// (see playback.go).
+	// (see playback.go); obsVol the observed volume level (see volume.go).
 	obsPos atomic.Uint64
 	obsDur atomic.Uint64
+	obsVol atomic.Uint64
 }
 
 // overlayKind is which single overlay (if any) is currently shown.
@@ -160,12 +177,19 @@ const (
 // Config is the player's runtime configuration, free of any config-library
 // or YAML types. Shortcuts holds only the actions the user explicitly set
 // (action id -> key strings); absent actions fall back to built-in defaults.
-// SaveShortcuts, when non-nil, persists a replacement override map to disk;
-// it is injected by app/cmd so the player never touches YAML.
+// SaveShortcuts and SaveAudioState, when non-nil, persist to disk; both are
+// injected by app/cmd so the player never touches YAML.
+//
+// Volume is the saved level in percent, or nil when the user has none: a pointer
+// rather than an int so an absent setting stays distinguishable from a saved 0,
+// which would otherwise start every fresh install in silence.
 type Config struct {
 	Shortcuts        map[string][]string
 	PlaceholderImage string
+	Volume           *int
+	Muted            bool
 	SaveShortcuts    func(map[string][]string) error
+	SaveAudioState   func(volume int, muted bool) error
 }
 
 // Run opens a player window and plays the given file until the window closes
@@ -185,6 +209,7 @@ func Run(ctx context.Context, path string, cfg Config) error {
 	p.keymap = km
 	p.overrides = overrides
 	p.saveShortcuts = cfg.SaveShortcuts
+	p.saveAudioState = cfg.SaveAudioState
 
 	start := time.Now()
 
@@ -203,10 +228,13 @@ func Run(ctx context.Context, path string, cfg Config) error {
 
 	img := loadPlaceholder(cfg.PlaceholderImage, p.log)
 	p.placeholderSrc = paint.NewImageOp(img)
+	p.logoSrc = paint.NewImageOp(loadLogo(p.log))
 
-	if err := p.initMpv(); err != nil {
+	if err := p.initMpv(cfg.Volume); err != nil {
 		return err
 	}
+	// Mute is a property, not an option: it has to be applied after Initialize.
+	p.applyAudioState(cfg.Muted)
 	p.log.Debug("mpv initialized", "elapsed", time.Since(start))
 
 	// Pump mpv's event queue for log messages on its own goroutine. libmpv
@@ -246,6 +274,23 @@ func Run(ctx context.Context, path string, cfg Config) error {
 	}
 
 	return p.loop(ctx)
+}
+
+// setMinSize floors a window's size at minW x minH, given in dp.
+//
+// GLFW takes size limits in screen coordinates, and ScaleToMonitor is set on
+// both windows, so the requested size is multiplied by the monitor's content
+// scale. The limits get the same multiplication, otherwise a 200% display would
+// enforce a floor half the intended size in dp. GetContentScale is read from the
+// created window, which is already on its target monitor.
+//
+// glfw.DontCare leaves the maximum unbounded — a floor must not also cap.
+func setMinSize(win *glfw.Window, minW, minH int) {
+	sx, sy := win.GetContentScale()
+	if sx <= 0 || sy <= 0 { // no monitor info (headless/odd backend): use dp as-is
+		sx, sy = 1, 1
+	}
+	win.SetSizeLimits(int(float32(minW)*sx), int(float32(minH)*sy), glfw.DontCare, glfw.DontCare)
 }
 
 func (p *Player) initWindow() error {
@@ -292,6 +337,7 @@ func (p *Player) initWindow() error {
 		return fmt.Errorf("create window: %w", err)
 	}
 	p.window = window
+	setMinSize(window, minWidth, minHeight)
 	p.window.MakeContextCurrent()
 	glfw.SwapInterval(1)
 
@@ -327,12 +373,15 @@ func (p *Player) initGio() error {
 	return nil
 }
 
-func (p *Player) initMpv() error {
-	p.mpv = mpv.New()
-
-	for k, v := range map[string]string{
-		"vo":         "libmpv",
-		"volume-max": "100",
+// mpvOptions is the option set libmpv is configured with before Initialize.
+// startVol is the user's saved volume, or nil to leave mpv's own default alone.
+// Split from initMpv so it is testable: initMpv itself builds a GL render context
+// and so needs a GLFW context no display-free test has.
+func mpvOptions(startVol *int) map[string]string {
+	opts := map[string]string{
+		"vo": "libmpv",
+		// Kept equal to the control bar's slider range (see volumeMax).
+		"volume-max": volumeMaxOption(),
 		"idle":       "yes",
 		// Priority list instead of plain "auto": every vendor is still probed
 		// (see AGENTS.md), but cheap-to-fail probes come first so the CUDA
@@ -342,7 +391,21 @@ func (p *Player) initMpv() error {
 		// "auto" keeps coverage for anything not listed explicitly.
 		"hwdec":        "videotoolbox,d3d11va,d3d11va-copy,vaapi,vaapi-copy,nvdec,nvdec-copy,vdpau,vdpau-copy,auto",
 		"hwdec-codecs": "all",
-	} {
+	}
+	// An option rather than a property set after Initialize, so playback starts at
+	// the saved level instead of stepping up to it audibly on the first frames.
+	if v, ok := startVolume(startVol); ok {
+		opts["volume"] = v
+	}
+	return opts
+}
+
+// initMpv creates and configures the libmpv handle. startVol is the user's saved
+// volume, or nil to leave mpv's own default in place.
+func (p *Player) initMpv(startVol *int) error {
+	p.mpv = mpv.New()
+
+	for k, v := range mpvOptions(startVol) {
 		if err := p.mpv.SetOptionString(k, v); err != nil {
 			return fmt.Errorf("set mpv option %s=%s: %w", k, v, err)
 		}
@@ -381,6 +444,12 @@ func (p *Player) initMpv() error {
 		return err
 	}
 
+	// Same reasoning for the volume: the control bar's slider follows it on every
+	// frame the bar is visible (see volume.go).
+	if err := p.observeVolume(); err != nil {
+		return err
+	}
+
 	render, err := p.mpv.NewRenderContextGL(func(name string) unsafe.Pointer {
 		return glfw.GetProcAddress(name)
 	})
@@ -402,6 +471,11 @@ func (p *Player) loop(ctx context.Context) error {
 	loopStart := time.Now()
 	firstFrame := false
 	defer p.destroyPrefsWindow()
+
+	// Flush a still-pending volume on the way out, so a change made in the last
+	// half second before quitting is not lost. saveVolumeIfDue only writes once
+	// the change has settled, which a shutdown never waits for.
+	defer p.flushVolumeSave()
 
 	// A signal can arrive while the loop sleeps in WaitEventsTimeout, so wake
 	// it as soon as ctx is cancelled instead of waiting out the timeout.
@@ -435,6 +509,11 @@ func (p *Player) loop(ctx context.Context) error {
 		// through, or seeked past its end). Done here rather than in the event
 		// pump so loadfile stays on the main loop.
 		p.handleEndOfFile()
+
+		// Write the volume out once it has stopped moving. Loop-driven for the
+		// same reason as the info cache: no timer needed, the loop already ticks
+		// every idleFrame.
+		p.saveVolumeIfDue(time.Now())
 
 		// Acknowledge mpv's update flag when a new video frame is ready.
 		if p.needsRender.CompareAndSwap(true, false) {
@@ -574,24 +653,26 @@ func (p *Player) showProgress() {
 	p.revealControls(time.Now())
 }
 
-// changeVolume nudges mpv's volume by delta (percent), clamped by mpv's
-// own volume-max (set to 100 in initMpv), and flashes the resulting level.
+// changeVolume nudges mpv's volume by delta (percent), clamped by mpv's own
+// volume-max (set from volumeMax in initMpv), and brings the control bar up to
+// report the resulting level (no text overlay; see noteVolumeChanged).
 func (p *Player) changeVolume(delta int) {
 	if err := p.mpv.Command([]string{"add", "volume", fmt.Sprintf("%d", delta)}); err != nil {
 		p.log.Error("mpv add volume", "delta", delta, "err", err)
 		return
 	}
-	p.flashVolume()
+	p.noteVolumeChanged()
 }
 
-// toggleMute flips mpv's mute flag and flashes the new state.
+// toggleMute flips mpv's mute flag and brings the control bar up, whose crossed-out
+// glyph is the readout for the new state.
 func (p *Player) toggleMute() {
 	p.muted = !p.muted
 	if err := p.mpv.SetProperty("mute", mpv.FormatFlag, p.muted); err != nil {
 		p.log.Error("set mute property", "muted", p.muted, "err", err)
 		return
 	}
-	p.flashVolume()
+	p.noteVolumeChanged()
 }
 
 // toggleOverlay opens ov, or closes it if it is already open. Rendering is

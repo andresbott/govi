@@ -20,9 +20,10 @@ const osdDuration = 1200 * time.Millisecond
 // flash shows msg over the video for osdDuration, replacing any flash still
 // visible. An empty msg clears it.
 //
-// Every flash is a snapshot: playback progress is the control bar's job
-// (controls.go), whose knob re-reads the observed position every frame, so
-// nothing here has to keep updating itself.
+// Every flash is a snapshot: playback progress and the volume are both the control
+// bar's job (controls.go), whose sliders re-read the observed values every frame,
+// so nothing here has to keep updating itself. Playlist position is the only
+// remaining flash — it is genuinely a one-shot message, not a live value.
 func (p *Player) flash(msg string) {
 	p.osdText = msg
 	p.osdUntil = time.Now().Add(osdDuration)
@@ -33,29 +34,10 @@ func (p *Player) osdVisible(now time.Time) bool {
 	return p.osdText != "" && now.Before(p.osdUntil)
 }
 
-// volumeStatus renders the flash line for a volume change: the level in
-// percent, or "Muted" while mute is on (the level is irrelevant then).
-func volumeStatus(vol int64, muted bool) string {
-	if muted {
-		return "Muted"
-	}
-	return fmt.Sprintf("Volume %d%%", vol)
-}
-
 // positionStatus renders the flash line for playlist navigation: the 1-based
 // position, the entry count, and the file name.
 func positionStatus(idx, total int, path string) string {
 	return fmt.Sprintf("%d / %d   %s", idx+1, total, filepath.Base(path))
-}
-
-// flashVolume flashes the current volume as reported by mpv, so the clamped
-// value (volume-max) is shown rather than the requested one.
-func (p *Player) flashVolume() {
-	var vol int64
-	if p.mpv != nil { // unit tests build a Player without mpv
-		vol = p.propInt("volume")
-	}
-	p.flash(volumeStatus(vol, p.muted))
 }
 
 // flashPosition flashes where the playlist now stands. It is a no-op without a
@@ -68,8 +50,8 @@ func (p *Player) flashPosition() {
 	p.flash(positionStatus(p.pl.idx, len(p.pl.entries), cur))
 }
 
-// layoutOSD draws the status flash at the bottom center, above where playback
-// controls would sit. Nothing is drawn once the flash expired.
+// layoutOSD draws the status flash at the bottom center, above where the control
+// bar sits. Nothing is drawn once the flash expired.
 func (p *Player) layoutOSD(gtx layout.Context) {
 	if !p.osdVisible(gtx.Now) {
 		return

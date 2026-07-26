@@ -41,6 +41,11 @@ func forwardMpvLogs(p *Player) {
 			// render timeout after a seek and stutters the video (see
 			// playback.go).
 			p.notePlaybackProp(prop.Name, prop.Data)
+			if prop.Name == "volume" {
+				// Cached for the same reason: the control bar's volume slider
+				// follows the level on every frame it is visible (volume.go).
+				p.noteVolumeProp(prop.Data)
+			}
 			if prop.Name == "idle-active" {
 				// FormatFlag comes back as int (0/1).
 				if v, ok := prop.Data.(int); ok {

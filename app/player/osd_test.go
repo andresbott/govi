@@ -8,18 +8,6 @@ import (
 	"time"
 )
 
-func TestVolumeStatusShowsLevel(t *testing.T) {
-	if got := volumeStatus(45, false); got != "Volume 45%" {
-		t.Errorf("volumeStatus(45, false) = %q, want \"Volume 45%%\"", got)
-	}
-}
-
-func TestVolumeStatusMutedHidesLevel(t *testing.T) {
-	if got := volumeStatus(45, true); got != "Muted" {
-		t.Errorf("volumeStatus(45, true) = %q, want \"Muted\"", got)
-	}
-}
-
 func TestPositionStatusIsOneBasedWithFileName(t *testing.T) {
 	got := positionStatus(0, 3, "/v/a.mp4")
 	if !strings.HasPrefix(got, "1 / 3") {
@@ -86,10 +74,15 @@ func TestFlashPositionWithoutPlaylistIsNoop(t *testing.T) {
 	}
 }
 
-func TestFlashVolumeWithoutMpvReportsMuteState(t *testing.T) {
+// The volume no longer flashes any text: the control bar's slider and its mute
+// glyph are the whole readout, the same way the seek bar replaced the progress
+// flash. Only playlist navigation flashes now.
+func TestVolumeChangesDoNotFlashText(t *testing.T) {
 	p := &Player{muted: true}
-	p.flashVolume() // mpv is nil in tests; must not panic
-	if p.osdText != "Muted" {
-		t.Errorf("osdText = %q, want \"Muted\"", p.osdText)
+
+	p.noteVolumeChanged() // mpv is nil in tests; must not panic
+
+	if p.osdVisible(time.Now()) {
+		t.Errorf("a volume change flashed %q, want no text overlay", p.osdText)
 	}
 }

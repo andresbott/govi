@@ -1,7 +1,32 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- govi application icon: the idle screen's play glyph on its dark backdrop. -->
-<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
-  <rect x="4" y="4" width="120" height="120" rx="24" fill="#1a1a1e"/>
-  <rect x="4" y="4" width="120" height="120" rx="24" fill="none" stroke="#3a3a42" stroke-width="2"/>
-  <path d="M50 38 L88 64 L50 90 Z" fill="#d8d8de"/>
+<!-- govi application icon: the play glyph, same artwork as the idle-screen logo
+     (app/player/assets/logo.png). Source: zarf/design/icon.svg. -->
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256" version="1.1">
+  <defs>
+    <linearGradient id="glyphFill">
+      <stop offset="0" style="stop-color:#216576;stop-opacity:1"/>
+      <stop offset="1" style="stop-color:#236a95;stop-opacity:1"/>
+    </linearGradient>
+    <linearGradient
+       xlink:href="#glyphFill"
+       xmlns:xlink="http://www.w3.org/1999/xlink"
+       id="glyphFillPos"
+       x1="162.16513"
+       y1="82.061722"
+       x2="158.66631"
+       y2="67.687073"
+       gradientUnits="userSpaceOnUse"
+       gradientTransform="translate(-42.8169,95.478562)"/>
+  </defs>
+  <g transform="matrix(10.243735,0,0,10.243735,-1101.3978,-1602.044)">
+    <path
+       style="color:#000000;fill:none;stroke:#b0b0b0;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round;stroke-miterlimit:2.4;stroke-dashoffset:27.053;stroke-opacity:1"
+       d="m 111.76221,157.87262 a 2.1767177,2.1767177 0 0 0 -1.1289,1.90625 v 10.72266 a 2.1765001,2.1765001 0 0 0 2.17773,2.17773 2.1765001,2.1765001 0 0 0 2.17578,-2.17773 v -6.76367 l 8.19336,5.20312 -11.36523,7.22266 a 2.1765001,2.1765001 0 0 0 -0.66797,3.00391 2.1765001,2.1765001 0 0 0 3.0039,0.66992 l 14.25586,-9.06055 a 2.1767177,2.1767177 0 0 0 0,-3.67578 l -14.42968,-9.16016 a 2.1767177,2.1767177 0 0 0 -2.21485,-0.0684 z"/>
+    <path
+       style="fill:none;stroke:url(#glyphFillPos);stroke-width:4.353;stroke-linecap:round;stroke-linejoin:round;stroke-miterlimit:2.4;stroke-dashoffset:27.053;stroke-opacity:1;paint-order:normal"
+       d="m 113.60198,177.85252 14.25691,-9.0609 -14.4294,-9.16049 v 10.7234"/>
+    <path
+       style="color:#000000;fill:none;stroke:#70543d;stroke-width:0.2;stroke-linecap:round;stroke-linejoin:round;stroke-miterlimit:2.4;stroke-dasharray:2.4, 0.6, 7, 0;stroke-dashoffset:2.14;stroke-opacity:1"
+       d="m 112.35285,157.25643 a 2.1767177,2.1767177 0 0 0 -1.1289,1.90625 v 10.72265 a 2.1765001,2.1765001 0 0 0 2.17773,2.17774 2.1765001,2.1765001 0 0 0 2.17578,-2.17774 v -6.76367 l 8.19336,5.20313 -11.36523,7.22265 a 2.1765001,2.1765001 0 0 0 -0.66797,3.00391 2.1765001,2.1765001 0 0 0 3.0039,0.66992 l 14.25586,-9.06054 a 2.1767177,2.1767177 0 0 0 0,-3.67579 l -14.42968,-9.16015 a 2.1767177,2.1767177 0 0 0 -2.21485,-0.0684 z"/>
+  </g>
 </svg>

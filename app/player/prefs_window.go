@@ -25,6 +25,18 @@ import (
 const (
 	prefsWinWidth  = 620
 	prefsWinHeight = 520
+	// prefsWinMinWidth is the narrowest the window can get before a shortcut row
+	// starts clipping. A row is a fixed-width sequence (see overlay_prefs.go):
+	// label 170 + chip 110 + clear 28 + spacer 10 + chip 110 + clear 28 = 456 dp,
+	// inside UniformInset(20) on both sides = 496. Rounded to 500; below this the
+	// second clear button is cut off, which is exactly the "messed up view" a
+	// floor should prevent.
+	prefsWinMinWidth = 500
+	// prefsWinMinHeight keeps the header block (title, two hint lines, message)
+	// plus a few list rows visible. The header costs ~120 dp with its spacers and
+	// the 40 dp of inset; 300 leaves room for four 38 dp rows, enough that the
+	// list still reads as a scrollable list rather than a single cramped row.
+	prefsWinMinHeight = 300
 	// prefsScrollScale converts one mouse-wheel notch into a scroll distance,
 	// matching the factor Gio's own X11 backend applies.
 	prefsScrollScale = 10
@@ -118,6 +130,7 @@ func (p *Player) newPrefsWindow() (*prefsWindow, error) {
 	if err != nil {
 		return nil, fmt.Errorf("create preferences window: %w", err)
 	}
+	setMinSize(win, prefsWinMinWidth, prefsWinMinHeight)
 
 	theme := material.NewTheme()
 	theme.Shaper = text.NewShaper(text.WithCollection(gofont.Collection()))

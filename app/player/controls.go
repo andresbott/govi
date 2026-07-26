@@ -28,10 +28,21 @@ const (
 	// barInset is the gap between the bar row and the window edges. The row is
 	// laid out at the window width, so the bar itself scales with the viewport.
 	barInset = unit.Dp(16)
+	// volumeBarWidth is the volume slider's fixed width. Unlike the seek bar it
+	// does not grow with the viewport: the volume range is the same 0..volumeMax at
+	// any window size, and a slider as wide as the window would read as the more
+	// important of the two. At 120 dp a whole percent is still just over a pixel, so
+	// the knob has room to be aimed rather than only nudged.
+	volumeBarWidth = unit.Dp(120)
+	// The icon buttons' glyph size and padding. They are the tallest thing in the
+	// row, so together they set the row's height — the sliders are only
+	// 2*knobGrab tall and sit centered against them.
+	buttonGlyph = unit.Dp(22)
+	buttonPad   = unit.Dp(8)
 	// controlsHideAfter is how long the bar stays up after the last pointer
 	// input. The loop renders every idleFrame, so this needs no timer — the same
 	// reasoning as the status flash in osd.go.
-	controlsHideAfter = 2 * time.Second
+	controlsHideAfter = 1 * time.Second
 	// controlsFade is how long the bar takes to fade in and out. Deliberately
 	// short: it should read as a quick fade, not an animation. The loop renders
 	// every idleFrame (50 ms), so this spans only a handful of frames — going
@@ -39,11 +50,13 @@ const (
 	controlsFade = 150 * time.Millisecond
 )
 
-// Bar colors: the played portion is a bright blue, the remainder a faint white
-// so the track hints at the full length without competing with the played part,
-// and stays legible over both dark and bright video.
+// Bar colors: the filled portion is a bright blue, the remainder a faint white
+// so the track hints at the full length without competing with the filled part,
+// and stays legible over both dark and bright video. Both sliders use the same
+// blue — they are the same kind of control, and their differing widths and
+// positions in the row are what tell them apart.
 var (
-	playedColor = color.NRGBA{R: 0x3d, G: 0x8b, B: 0xff, A: 0xff}
+	filledColor = color.NRGBA{R: 0x3d, G: 0x8b, B: 0xff, A: 0xff}
 	trackColor  = color.NRGBA{R: 0xff, G: 0xff, B: 0xff, A: 0x22}
 	knobColor   = color.NRGBA{R: 0xff, G: 0xff, B: 0xff, A: 0xff}
 	iconColor   = color.NRGBA{R: 0xff, G: 0xff, B: 0xff, A: 0xf0}
@@ -53,11 +66,11 @@ var (
 // U+23F8 ⏸ and U+1F50A 🔊 are all absent, verified against gofont.Collection),
 // so these are vector paths from the material design set rather than text.
 // mustIcon is safe at init: the data is compiled in, so a decode failure is a
-// build bug, not a runtime condition.
+// build bug, not a runtime condition. The volume glyphs live in volume.go, with
+// the state they depend on.
 var (
-	iconPlay   = mustIcon(icons.AVPlayArrow)
-	iconPause  = mustIcon(icons.AVPause)
-	iconVolume = mustIcon(icons.AVVolumeUp)
+	iconPlay  = mustIcon(icons.AVPlayArrow)
+	iconPause = mustIcon(icons.AVPause)
 )
 
 func mustIcon(data []byte) *widget.Icon {
@@ -198,31 +211,54 @@ func (p *Player) scrub(frac float32) {
 	}
 }
 
-// layoutControls draws the bottom control bar: play button, progress bar with a
-// draggable knob, volume button. Nothing is drawn once the pointer has been
-// still for controlsHideAfter.
-func (p *Player) layoutControls(gtx layout.Context) {
-	dragging := p.progress.Dragging()
-	if !controlsVisible(gtx.Now, p.lastInput, dragging) {
-		return
-	}
-	alpha := controlsAlpha(gtx.Now, p.lastInput, p.revealedAt, dragging)
+// barDragging reports whether either of the bar's sliders is being held. Both
+// pin the bar visible and opaque, so a slow drag on either cannot make it fade
+// out from under the pointer.
+func (p *Player) barDragging() bool {
+	return p.progress.Dragging() || p.volume.Dragging()
+}
 
-	// Consume clicks before Layout: Clickable.Layout drains pending click
-	// events, so a Clicked check after it never fires (see menu.go).
+// updateControls consumes the bar's pending pointer events and applies them:
+// button clicks, and the two sliders' drags. Split out of layoutControls so the
+// wiring can be exercised without the bar's flex geometry.
+//
+// Two orderings are load-bearing. Clicks are drained *before* Layout, because
+// Clickable.Layout consumes pending click events and a Clicked check after it
+// never fires (see menu.go). And each slider's Update runs before its Value is
+// read, so a drag acts on the position the pointer is actually at; only when a
+// slider is not being dragged does its knob follow mpv instead.
+func (p *Player) updateControls(gtx layout.Context) {
 	if p.playBtn.Clicked(gtx) {
 		p.togglePause()
 	}
-	p.volumeBtn.Clicked(gtx) // placeholder: drains the click, no action yet
+	if p.volumeBtn.Clicked(gtx) {
+		p.toggleMute()
+	}
 
-	// A drag moves the knob and seeks; while it is not being dragged the knob
-	// follows playback. Update before reading Value so the seek uses the
-	// position the pointer is actually at.
 	if p.progress.Update(gtx) {
 		p.scrub(p.progress.Value)
 	} else if !p.progress.Dragging() {
 		p.syncProgressKnob()
 	}
+
+	if p.volume.Update(gtx) {
+		p.setVolume(p.volume.Value)
+	} else if !p.volume.Dragging() {
+		p.syncVolumeKnob()
+	}
+}
+
+// layoutControls draws the bottom control bar: play button, progress bar with a
+// draggable knob, volume button and volume slider. Nothing is drawn once the
+// pointer has been still for controlsHideAfter.
+func (p *Player) layoutControls(gtx layout.Context) {
+	dragging := p.barDragging()
+	if !controlsVisible(gtx.Now, p.lastInput, dragging) {
+		return
+	}
+	alpha := controlsAlpha(gtx.Now, p.lastInput, p.revealedAt, dragging)
+
+	p.updateControls(gtx)
 
 	layout.S.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 		return layout.Inset{
@@ -238,7 +274,13 @@ func (p *Player) layoutControls(gtx layout.Context) {
 					return p.layoutProgressBar(gtx, alpha)
 				}),
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					return p.controlButton(gtx, &p.volumeBtn, iconVolume, "Volume", alpha)
+					return p.controlButton(gtx, &p.volumeBtn, volumeIcon(p.volumeLevel(), p.muted), "Mute", alpha)
+				}),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					// Rigid at a fixed width (see volumeBarWidth); layoutSlider
+					// sizes itself from Max.X, and works its own height out.
+					gtx.Constraints.Max.X = gtx.Dp(volumeBarWidth)
+					return p.layoutVolumeBar(gtx, alpha)
 				}),
 			)
 		})
@@ -251,16 +293,29 @@ func (p *Player) controlButton(gtx layout.Context, btn *widget.Clickable, icon *
 	b := material.IconButton(p.theme, btn, icon, desc)
 	b.Background = color.NRGBA{} // transparent: the glyph alone reads as the control
 	b.Color = fadeColor(iconColor, alpha)
-	b.Size = unit.Dp(22)
-	b.Inset = layout.UniformInset(unit.Dp(8))
+	b.Size = buttonGlyph
+	b.Inset = layout.UniformInset(buttonPad)
 	return b.Layout(gtx)
 }
 
-// layoutProgressBar draws the track, the played portion, and the knob, and
-// registers the drag area. The grab radius (not the smaller drawn radius) is
-// reserved at both ends, so the knob's travel matches its hit area and the
-// circle stays inside the row at 0% and 100%. alpha fades the whole bar.
+// layoutProgressBar draws the seek slider, spanning whatever width the flex row
+// gives it.
 func (p *Player) layoutProgressBar(gtx layout.Context, alpha float32) layout.Dimensions {
+	return p.layoutSlider(gtx, &p.progress, alpha)
+}
+
+// layoutVolumeBar draws the volume slider. Identical to the seek bar down to the
+// fill colour — same widget, so a drag behaves the same way; only its width and
+// its place in the row set it apart.
+func (p *Player) layoutVolumeBar(gtx layout.Context, alpha float32) layout.Dimensions {
+	return p.layoutSlider(gtx, &p.volume, alpha)
+}
+
+// layoutSlider draws the track, the filled portion, and the knob for f, and
+// registers its drag area. The grab radius (not the smaller drawn radius) is
+// reserved at both ends, so the knob's travel matches its hit area and the circle
+// stays inside the row at 0% and 100%. alpha fades the whole slider.
+func (p *Player) layoutSlider(gtx layout.Context, f *widget.Float, alpha float32) layout.Dimensions {
 	kr := gtx.Dp(knobRadius)
 	kg := gtx.Dp(knobGrab)
 	th := gtx.Dp(trackHeight)
@@ -278,22 +333,22 @@ func (p *Player) layoutProgressBar(gtx layout.Context, alpha float32) layout.Dim
 	dragGtx := gtx
 	dragGtx.Constraints.Min = image.Pt(trackW, height)
 	off := op.Offset(image.Pt(kg, 0)).Push(gtx.Ops)
-	p.progress.Layout(dragGtx, layout.Horizontal, knobGrab)
+	f.Layout(dragGtx, layout.Horizontal, knobGrab)
 	off.Pop()
 
-	// Track and played portion, vertically centered in the row.
+	// Track and filled portion, vertically centered in the row.
 	top := (height - th) / 2
 	full := image.Rect(kg, top, kg+trackW, top+th)
 	paint.FillShape(gtx.Ops, fadeColor(trackColor, alpha), clip.Rect(full).Op())
 
-	played := int(p.progress.Value * float32(trackW))
-	if played > 0 {
-		paint.FillShape(gtx.Ops, fadeColor(playedColor, alpha),
-			clip.Rect(image.Rect(kg, top, kg+played, top+th)).Op())
+	filled := int(f.Value * float32(trackW))
+	if filled > 0 {
+		paint.FillShape(gtx.Ops, fadeColor(filledColor, alpha),
+			clip.Rect(image.Rect(kg, top, kg+filled, top+th)).Op())
 	}
 
-	// Knob: a white circle centered on the played/remaining boundary.
-	cx := kg + played
+	// Knob: a white circle centered on the filled/remaining boundary.
+	cx := kg + filled
 	knob := image.Rect(cx-kr, height/2-kr, cx+kr, height/2+kr)
 	paint.FillShape(gtx.Ops, fadeColor(knobColor, alpha), clip.Ellipse(knob).Op(gtx.Ops))
 
