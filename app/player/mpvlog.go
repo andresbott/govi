@@ -36,6 +36,11 @@ func forwardMpvLogs(p *Player) {
 			glfw.PostEmptyEvent() // wake the loop so it advances without waiting out the timeout
 		case mpv.EventPropertyChange:
 			prop := ev.Property()
+			// Position and duration are cached here so the render loop never
+			// reads them synchronously: such a read blocks on mpv's 200 ms
+			// render timeout after a seek and stutters the video (see
+			// playback.go).
+			p.notePlaybackProp(prop.Name, prop.Data)
 			if prop.Name == "idle-active" {
 				// FormatFlag comes back as int (0/1).
 				if v, ok := prop.Data.(int); ok {

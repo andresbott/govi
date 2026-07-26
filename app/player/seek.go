@@ -1,6 +1,9 @@
 package player
 
-import "fmt"
+import (
+	"fmt"
+	"time"
+)
 
 // seekPercentStep is how far the coarse seek moves per fire, as a share of the
 // file's total duration.
@@ -61,34 +64,38 @@ func (p *Player) advancePastEnd(pos, dur, step float64) bool {
 }
 
 // seek moves playback position by delta seconds (negative = backwards),
-// relative to the current position, and flashes the resulting progress. A
-// forward seek that runs off the end continues with the next video instead. mpv
-// ignores it when no file is loaded.
+// relative to the current position, and brings the control bar up to show where
+// it landed. A forward seek that runs off the end continues with the next video
+// instead. mpv ignores it when no file is loaded.
 func (p *Player) seek(delta int) {
-	if p.advancePastEnd(p.propFloat("time-pos"), p.propFloat("duration"), float64(delta)) {
+	if p.advancePastEnd(p.playbackPos(), p.playbackDur(), float64(delta)) {
 		return
 	}
 	p.runSeek(seekCommand(delta), "delta", delta)
 }
 
 // seekPercent moves playback position by pct percent of the file's duration
-// (negative = backwards) and flashes the resulting progress. Like seek, running
-// off the end continues with the next video.
+// (negative = backwards) and brings the control bar up. Like seek, running off
+// the end continues with the next video.
 func (p *Player) seekPercent(pct int) {
-	dur := p.propFloat("duration")
-	if p.advancePastEnd(p.propFloat("time-pos"), dur, percentDelta(dur, pct)) {
+	dur := p.playbackDur()
+	if p.advancePastEnd(p.playbackPos(), dur, percentDelta(dur, pct)) {
 		return
 	}
 	p.runSeek(seekPercentCommand(pct), "percent", pct)
 }
 
-// runSeek sends a seek command and flashes the resulting progress. amountKey and
-// amount name the step in the error log, which is the only thing that differs
-// between the two seek flavours.
+// runSeek sends a seek command and brings the control bar up so the new position
+// is visible. amountKey and amount name the step in the error log, which is the
+// only thing that differs between the two seek flavours.
+//
+// The bar replaces the text flash these used to raise: its knob is re-read from
+// the observed position on every frame (syncProgressKnob), so it tracks a seek
+// mpv is still applying without the flash's re-read machinery.
 func (p *Player) runSeek(cmd []string, amountKey string, amount int) {
 	if err := p.mpv.Command(cmd); err != nil {
 		p.log.Error("mpv seek", amountKey, amount, "err", err)
 		return
 	}
-	p.flashProgress()
+	p.revealControls(time.Now())
 }

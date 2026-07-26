@@ -99,22 +99,30 @@ type Player struct {
 	// next/previous does not wait on cold-storage reads.
 	pf prefetcher
 
-	// infoCache holds the info overlay's rows, re-read from mpv once per
+	// infoCache holds the info overlay's sections, re-read from mpv once per
 	// second while the overlay is open (see loop).
-	infoCache       []infoRow
+	infoCache       []infoSection
 	infoRefreshedAt time.Time
 
-	// osdText is the transient status flash (volume level, playlist position,
-	// playback progress) drawn until osdUntil passes; see osd.go. osdProgress
-	// marks a progress flash, which the loop keeps re-reading from mpv while it
-	// is visible.
-	osdText     string
-	osdUntil    time.Time
-	osdProgress bool
+	// osdText is the transient status flash (volume level, playlist position)
+	// drawn until osdUntil passes; see osd.go. Playback progress is not among
+	// them — the control bar reports that (controls.go).
+	osdText  string
+	osdUntil time.Time
 
 	// lastRepeat is when each action last fired, so held-down keys are
 	// throttled to the action's own repeat interval (see dispatchKey).
 	lastRepeat map[actionID]time.Time
+
+	// control-bar state (see controls.go): the seek bar's knob position, the
+	// two buttons, when pointer input last arrived (the bar auto-hides
+	// controlsHideAfter later) and the fade-in's origin. Zero lastInput means the
+	// pointer has not moved yet, so the bar starts hidden.
+	progress   widget.Float
+	playBtn    widget.Clickable
+	volumeBtn  widget.Clickable
+	lastInput  time.Time
+	revealedAt time.Time
 
 	// windowed geometry remembered while fullscreen, restored on exit.
 	winX, winY, winW, winH int
@@ -131,6 +139,11 @@ type Player struct {
 	// ended on its own (see autoadvance.go) and consumed on the main loop,
 	// which then plays the next playlist entry.
 	eofPending atomic.Bool
+
+	// obsPos/obsDur are the observed playback position and duration
+	// (see playback.go).
+	obsPos atomic.Uint64
+	obsDur atomic.Uint64
 }
 
 // overlayKind is which single overlay (if any) is currently shown.
@@ -361,6 +374,13 @@ func (p *Player) initMpv() error {
 		return fmt.Errorf("observe idle-active: %w", err)
 	}
 
+	// Observe position and duration so the render loop reads them from the
+	// cache: a synchronous property read from this thread blocks on mpv's
+	// 200 ms render timeout after a seek (see playback.go).
+	if err := p.observePlayback(); err != nil {
+		return err
+	}
+
 	render, err := p.mpv.NewRenderContextGL(func(name string) unsafe.Pointer {
 		return glfw.GetProcAddress(name)
 	})
@@ -427,16 +447,12 @@ func (p *Player) loop(ctx context.Context) error {
 
 		if p.overlay == overlayInfo {
 			if time.Since(p.infoRefreshedAt) >= time.Second || p.infoCache == nil {
-				p.infoCache = p.infoRows()
+				p.infoCache = p.infoSections()
 				p.infoRefreshedAt = time.Now()
 			}
 		} else {
 			p.infoCache = nil
 		}
-
-		// A progress flash tracks playback while it is visible, so a seek shows
-		// the position mpv actually reached rather than the pre-seek one.
-		p.refreshOSD(time.Now())
 
 		// Render every iteration so the overlay stays responsive even while
 		// playback is paused and no new video frames arrive.
@@ -552,10 +568,10 @@ func (p *Player) stop() {
 	}
 }
 
-// showProgress flashes the current playback progress on demand (its own
-// action), so the position is reachable without disturbing playback.
+// showProgress brings the control bar up on demand (its own action), so the
+// position is reachable without moving the mouse or disturbing playback.
 func (p *Player) showProgress() {
-	p.flashProgress()
+	p.revealControls(time.Now())
 }
 
 // changeVolume nudges mpv's volume by delta (percent), clamped by mpv's

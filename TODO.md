@@ -3,3 +3,5 @@
 
 - [] Make file browable similar to qimbv
 - [] nice video controls
+  - [] settings button
+  - [] volume button

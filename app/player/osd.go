@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"image"
 	"image/color"
-	"math"
 	"path/filepath"
 	"time"
 
@@ -20,10 +19,13 @@ const osdDuration = 1200 * time.Millisecond
 
 // flash shows msg over the video for osdDuration, replacing any flash still
 // visible. An empty msg clears it.
+//
+// Every flash is a snapshot: playback progress is the control bar's job
+// (controls.go), whose knob re-reads the observed position every frame, so
+// nothing here has to keep updating itself.
 func (p *Player) flash(msg string) {
 	p.osdText = msg
 	p.osdUntil = time.Now().Add(osdDuration)
-	p.osdProgress = false
 }
 
 // osdVisible reports whether a flash is set and has not expired at now.
@@ -44,43 +46,6 @@ func volumeStatus(vol int64, muted bool) string {
 // position, the entry count, and the file name.
 func positionStatus(idx, total int, path string) string {
 	return fmt.Sprintf("%d / %d   %s", idx+1, total, filepath.Base(path))
-}
-
-// progressStatus renders the flash line for a position change: elapsed time,
-// total time and the percentage played. A non-positive duration (live stream, or
-// mpv not knowing it yet) drops the total and the percentage rather than
-// printing a bogus 0:00 or a division by zero.
-func progressStatus(pos, dur float64) string {
-	if dur <= 0 {
-		return humanClock(pos)
-	}
-	pct := int(math.Round(pos / dur * 100))
-	return fmt.Sprintf("%s / %s   %d%%", humanClock(pos), humanClock(dur), pct)
-}
-
-// flashProgress flashes how far into the current file playback is, and keeps it
-// updating for as long as the flash is visible (see refreshOSD): mpv applies a
-// seek asynchronously, so the position read right after the command is still the
-// old one. It is a no-op with no file loaded, where there is nothing to report.
-func (p *Player) flashProgress() {
-	if p.mpv == nil || p.idle.Load() { // unit tests build a Player without mpv
-		return
-	}
-	p.flash(progressStatus(p.propFloat("time-pos"), p.propFloat("duration")))
-	p.osdProgress = true
-}
-
-// refreshOSD re-reads a live progress flash, called once per loop iteration. Any
-// other flash (volume, playlist position) is a snapshot and left alone.
-func (p *Player) refreshOSD(now time.Time) {
-	if !p.osdProgress {
-		return
-	}
-	if !p.osdVisible(now) {
-		p.osdProgress = false
-		return
-	}
-	p.osdText = progressStatus(p.propFloat("time-pos"), p.propFloat("duration"))
 }
 
 // flashVolume flashes the current volume as reported by mpv, so the clamped
