@@ -58,6 +58,20 @@ knowledge stays in `app/cmd`; `AppCfg.toPlayerConfig()` produces the plain
   YAML (`validateShortcutNames`) because bumbu silently drops unknown fields.
   Bad config is startup-fatal, naming the offending entry; a missing file is
   silent defaults.
+- **Two writers share config.yaml**, so both go through `updateConfig`, which
+  read-modify-writes the file as a whole YAML document and leaves every other
+  top-level key intact: `saveShortcuts` (preferences window) owns `shortcuts:`, and
+  `saveAudioState` (volume, debounced in the render loop) owns `volume:`/`muted:`.
+  A writer that marshalled only its own section would silently drop the other's —
+  `TestSaveShortcutsPreservesTheSavedVolume` and its mirror pin that. Comments are
+  not preserved by either; writes are atomic (temp file + rename).
+- **"Unset" needs a sentinel, not a nil pointer, in `AppCfg`**: bumbu allocates
+  nil pointer fields before unmarshalling, so a `*int` would come back as a set 0
+  for a config that never mentions the key — and a saved volume of 0 is a real,
+  different thing (silence). `Volume` is therefore an `int` seeded with
+  `volumeUnset` by `loadConfig`, converted to `player.Config`'s `*int` in
+  `toPlayerConfig`. The player side *can* use a pointer, since nothing reflects
+  over it.
 - **Trash is per-OS native, and never copies** (`libs/trash`): Windows uses
   `SHFileOperationW` with `FOF_ALLOWUNDO`, macOS `-[NSFileManager
   trashItemAtURL:]` via cgo (the only way to get Finder's "Put Back"), Linux/BSD
@@ -77,7 +91,8 @@ knowledge stays in `app/cmd`; `AppCfg.toPlayerConfig()` produces the plain
 ## Domain types worth knowing
 
 - `player.Player` — all runtime state (one instance, main-loop owned except
-  the documented atomics `needsRender`, `idle`).
+  the documented atomics `needsRender`, `idle`, `eofPending`, `obsPos`, `obsDur`,
+  `obsVol`).
 - `actionID` / `action` — registry entry; IDs double as YAML config keys.
 - `keyChord{glfw.Key, ModifierKey}` — dispatch unit; lock modifiers stripped.
 - `overlayKind` — `none | info | help | menu | confirm | prefs`; exactly one overlay at a time.

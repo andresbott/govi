@@ -65,17 +65,41 @@ func headlessPlayer(t *testing.T) *Player {
 		}
 		m.TerminateDestroy()
 	})
-	return &Player{log: slog.Default(), mpv: m}
+	p := &Player{log: slog.Default(), mpv: m}
+	// The seek path reads position and duration from the observed cache, never
+	// synchronously (see playback.go), so the observers have to be registered
+	// here just as initMpv does it. waitPlaying is what feeds the cache, standing
+	// in for the event pump the real player runs.
+	if err := p.observePlayback(); err != nil {
+		t.Fatal(err)
+	}
+	return p
 }
 
 // waitPlaying blocks until mpv reports a playable position, so a seek in the
-// test acts on a started file rather than being dropped.
+// test acts on a started file rather than being dropped. It routes observed
+// properties into the cache as it drains the queue, which is the job
+// forwardMpvLogs does in the real player — without it the seek path would see a
+// position of zero.
 func waitPlaying(t *testing.T, p *Player) {
 	t.Helper()
 	deadline := time.Now().Add(10 * time.Second)
+	restarted := false
 	for time.Now().Before(deadline) {
 		ev := p.mpv.WaitEvent(0.1)
-		if ev != nil && ev.EventID == mpv.EventPlaybackRestart {
+		if ev == nil {
+			continue
+		}
+		if ev.EventID == mpv.EventPropertyChange {
+			prop := ev.Property()
+			p.notePlaybackProp(prop.Name, prop.Data)
+		}
+		if ev.EventID == mpv.EventPlaybackRestart {
+			restarted = true
+		}
+		// Return once playback has restarted *and* the position has arrived: the
+		// two are separate events, and the seek needs the position.
+		if restarted && p.playbackPos() > 0 {
 			return
 		}
 	}
@@ -141,5 +165,71 @@ func TestSeekPercentInsideFileStaysOnFile(t *testing.T) {
 	}
 	if _, err := os.Stat(first); err != nil {
 		t.Errorf("source file disturbed: %v", err)
+	}
+}
+
+// A keyboard seek reports where it landed by bringing the control bar up — the
+// bar replaced the text flash, and its knob already follows the observed
+// position every frame. Needs a real seek: runSeek only reveals once mpv
+// accepted the command, so an uninitialized handle would not exercise this.
+func TestSeekRevealsTheControlBar(t *testing.T) {
+	p := headlessPlayer(t)
+	if err := p.mpv.Command([]string{"loadfile", encodeClip(t, t.TempDir(), "a.mp4", 20)}); err != nil {
+		t.Fatal(err)
+	}
+	waitPlaying(t, p)
+
+	p.seek(5)
+
+	if !controlsVisible(time.Now(), p.lastInput, false) {
+		t.Error("a keyboard seek did not reveal the control bar")
+	}
+	if p.osdVisible(time.Now()) {
+		t.Errorf("a seek flashed %q, want no text overlay", p.osdText)
+	}
+}
+
+func TestSeekPercentRevealsTheControlBar(t *testing.T) {
+	p := headlessPlayer(t)
+	if err := p.mpv.Command([]string{"loadfile", encodeClip(t, t.TempDir(), "a.mp4", 20)}); err != nil {
+		t.Fatal(err)
+	}
+	waitPlaying(t, p)
+
+	p.seekPercent(seekPercentStep)
+
+	if !controlsVisible(time.Now(), p.lastInput, false) {
+		t.Error("a keyboard percent seek did not reveal the control bar")
+	}
+	if p.osdVisible(time.Now()) {
+		t.Errorf("a percent seek flashed %q, want no text overlay", p.osdText)
+	}
+}
+
+// End-to-end over every keyboard path to progress: dispatched through the
+// registry the way a real key press is, each must leave the bar visible and no
+// text overlay behind. The per-action tests above cover seek/seekPercent
+// directly; this one is what catches a *binding* that stops reporting — e.g. a
+// new seek flavour wired without the reveal.
+func TestKeyboardProgressActionsRevealBarNotText(t *testing.T) {
+	clip := encodeClip(t, t.TempDir(), "a.mp4", 20)
+	for _, id := range []actionID{actSeekForward, actSeekBack, actSeekForwardPct, actSeekBackPct, actProgress} {
+		t.Run(string(id), func(t *testing.T) {
+			p := headlessPlayer(t)
+			p.actions = actionByID()
+			if err := p.mpv.Command([]string{"loadfile", clip}); err != nil {
+				t.Fatal(err)
+			}
+			waitPlaying(t, p)
+
+			p.runAction(id)
+
+			if !controlsVisible(time.Now(), p.lastInput, false) {
+				t.Errorf("%s did not reveal the control bar", id)
+			}
+			if p.osdVisible(time.Now()) {
+				t.Errorf("%s flashed %q, want no text overlay", id, p.osdText)
+			}
+		})
 	}
 }

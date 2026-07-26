@@ -22,8 +22,20 @@ func TestLoadPlaceholderFallsBackOnBadPath(t *testing.T) {
 	}
 }
 
-func TestDecodePNGRejectsGarbage(t *testing.T) {
-	if _, err := decodePNG([]byte("not a png")); err == nil {
+func TestLoadLogoDecodesEmbedded(t *testing.T) {
+	img := loadLogo(slog.Default())
+	if img == nil {
+		t.Fatal("expected embedded logo, got nil")
+	}
+	// A 1x1 image is the decode-failure fallback, so this also catches a
+	// broken or truncated asset, not just a missing one.
+	if b := img.Bounds(); b.Dx() < 2 || b.Dy() < 2 {
+		t.Fatalf("logo bounds = %v, want the real asset", b)
+	}
+}
+
+func TestDecodeImageRejectsGarbage(t *testing.T) {
+	if _, err := decodeImage([]byte("not an image")); err == nil {
 		t.Fatal("expected decode error for garbage bytes")
 	}
 }

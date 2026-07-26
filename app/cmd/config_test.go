@@ -103,7 +103,7 @@ func TestLoadConfigSupportsAllRegistryActions(t *testing.T) {
 	want := map[string]string{
 		"seek-forward": "l", "seek-back": "j",
 		"seek-forward-percent": "shift+l", "seek-back-percent": "shift+j",
-		"next-video": "n",
+		"next-video":     "n",
 		"previous-video": "b", "move-to-trash": "t", "delete-file": "shift+d",
 		"preferences": "p", "progress": "o",
 	}
@@ -184,5 +184,197 @@ func TestSaveShortcutsEmptyMapRemovesSection(t *testing.T) {
 	}
 	if n := len(cfg.toPlayerConfig().Shortcuts); n != 0 {
 		t.Errorf("expected no shortcuts, got %v", cfg.toPlayerConfig().Shortcuts)
+	}
+}
+
+func TestLoadConfigAudioState(t *testing.T) {
+	path := writeTemp(t, "volume: 45\nmuted: true\n")
+	cfg, err := loadConfig(path)
+	if err != nil {
+		t.Fatalf("loadConfig: %v", err)
+	}
+	pc := cfg.toPlayerConfig()
+	if pc.Volume == nil {
+		t.Fatal("Volume is nil, want the configured 45")
+	}
+	if *pc.Volume != 45 {
+		t.Errorf("Volume = %v, want 45", *pc.Volume)
+	}
+	if !pc.Muted {
+		t.Error("Muted = false, want true")
+	}
+}
+
+// An absent volume must be distinguishable from a configured 0: the player
+// applies mpv's own default in the first case and silence in the second, so a
+// plain int would silently mute a first run.
+func TestLoadConfigAbsentVolumeIsUnset(t *testing.T) {
+	path := writeTemp(t, "placeholderImage: /tmp/idle.png\n")
+	cfg, err := loadConfig(path)
+	if err != nil {
+		t.Fatalf("loadConfig: %v", err)
+	}
+	if got := cfg.toPlayerConfig().Volume; got != nil {
+		t.Errorf("Volume = %v for a config with no volume key, want nil", *got)
+	}
+}
+
+func TestLoadConfigExplicitZeroVolumeIsSet(t *testing.T) {
+	path := writeTemp(t, "volume: 0\n")
+	cfg, err := loadConfig(path)
+	if err != nil {
+		t.Fatalf("loadConfig: %v", err)
+	}
+	got := cfg.toPlayerConfig().Volume
+	if got == nil {
+		t.Fatal("Volume is nil for an explicit `volume: 0`, want a set 0")
+	}
+	if *got != 0 {
+		t.Errorf("Volume = %v, want 0", *got)
+	}
+}
+
+func TestSaveAudioStateRoundTrip(t *testing.T) {
+	path := writeTemp(t, "placeholderImage: /tmp/idle.png\nshortcuts:\n  mute: [\"x\"]\n")
+
+	if err := saveAudioState(path, 45, true); err != nil {
+		t.Fatalf("saveAudioState: %v", err)
+	}
+
+	cfg, err := loadConfig(path)
+	if err != nil {
+		t.Fatalf("loadConfig after save: %v", err)
+	}
+	pc := cfg.toPlayerConfig()
+	if pc.Volume == nil || *pc.Volume != 45 {
+		t.Errorf("Volume = %v, want 45", pc.Volume)
+	}
+	if !pc.Muted {
+		t.Error("Muted = false, want true")
+	}
+	// Everything else in the file survives, the way saveShortcuts preserves it.
+	if pc.PlaceholderImage != "/tmp/idle.png" {
+		t.Errorf("placeholderImage lost on save: %q", pc.PlaceholderImage)
+	}
+	if got := pc.Shortcuts["mute"]; len(got) != 1 || got[0] != "x" {
+		t.Errorf("mute shortcut = %v, want [x] — saving the volume clobbered the shortcuts", got)
+	}
+}
+
+func TestSaveAudioStateCreatesMissingFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "sub", "config.yaml")
+
+	if err := saveAudioState(path, 70, false); err != nil {
+		t.Fatalf("saveAudioState on missing file: %v", err)
+	}
+
+	cfg, err := loadConfig(path)
+	if err != nil {
+		t.Fatalf("loadConfig: %v", err)
+	}
+	if got := cfg.toPlayerConfig().Volume; got == nil || *got != 70 {
+		t.Errorf("Volume = %v, want 70", got)
+	}
+}
+
+// The two savers write to the same file, so neither may drop what the other
+// stored: a volume saved on exit must survive a later shortcut rebind, and vice
+// versa.
+func TestSaveShortcutsPreservesTheSavedVolume(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := saveAudioState(path, 45, true); err != nil {
+		t.Fatalf("saveAudioState: %v", err)
+	}
+
+	if err := saveShortcuts(path, map[string][]string{"play-pause": {"p"}}); err != nil {
+		t.Fatalf("saveShortcuts: %v", err)
+	}
+
+	cfg, err := loadConfig(path)
+	if err != nil {
+		t.Fatalf("loadConfig: %v", err)
+	}
+	pc := cfg.toPlayerConfig()
+	if pc.Volume == nil || *pc.Volume != 45 {
+		t.Errorf("Volume = %v after a shortcut save, want 45", pc.Volume)
+	}
+	if !pc.Muted {
+		t.Error("Muted = false after a shortcut save, want true")
+	}
+}
+
+func TestSaveAudioStatePreservesSavedShortcuts(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := saveShortcuts(path, map[string][]string{"play-pause": {"p"}}); err != nil {
+		t.Fatalf("saveShortcuts: %v", err)
+	}
+
+	if err := saveAudioState(path, 45, false); err != nil {
+		t.Fatalf("saveAudioState: %v", err)
+	}
+
+	cfg, err := loadConfig(path)
+	if err != nil {
+		t.Fatalf("loadConfig: %v", err)
+	}
+	if got := cfg.toPlayerConfig().Shortcuts["play-pause"]; len(got) != 1 || got[0] != "p" {
+		t.Errorf("play-pause = %v after an audio save, want [p]", got)
+	}
+}
+
+// A saved level must survive a round trip through the file even at the extremes,
+// including 0 — the value the unset sentinel has to stay distinct from.
+func TestSaveAudioStateRoundTripsEveryLevel(t *testing.T) {
+	for _, vol := range []int{0, 1, 45, 100} {
+		path := filepath.Join(t.TempDir(), "config.yaml")
+		if err := saveAudioState(path, vol, false); err != nil {
+			t.Fatalf("saveAudioState(%d): %v", vol, err)
+		}
+		cfg, err := loadConfig(path)
+		if err != nil {
+			t.Fatalf("loadConfig: %v", err)
+		}
+		got := cfg.toPlayerConfig().Volume
+		if got == nil {
+			t.Errorf("volume %d came back unset", vol)
+			continue
+		}
+		if *got != vol {
+			t.Errorf("volume = %v, want %v", *got, vol)
+		}
+	}
+}
+
+// The whole loop, over one file: what the player saves on exit is what the next
+// launch feeds back to mpv. This is the test that fails if either half is wired to
+// a different key than the other.
+func TestSavedAudioStateSurvivesARestart(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+
+	// First run: the player's SaveAudioState callback fires as root.go builds it.
+	if err := saveAudioState(path, 45, true); err != nil {
+		t.Fatalf("saveAudioState: %v", err)
+	}
+
+	// Second run: loadConfig -> toPlayerConfig is what player.Run receives.
+	cfg, err := loadConfig(path)
+	if err != nil {
+		t.Fatalf("loadConfig: %v", err)
+	}
+	pc := cfg.toPlayerConfig()
+	if pc.Volume == nil || *pc.Volume != 45 {
+		t.Errorf("second run starts at %v, want the saved 45", pc.Volume)
+	}
+	if !pc.Muted {
+		t.Error("second run starts unmuted, want the saved muted state")
+	}
+}
+
+// `volume` and `muted` are top-level keys, so validateShortcutNames must not
+// mistake them for action ids.
+func TestLoadConfigAudioKeysAreNotShortcuts(t *testing.T) {
+	path := writeTemp(t, "volume: 45\nmuted: true\nshortcuts:\n  mute: [\"x\"]\n")
+	if _, err := loadConfig(path); err != nil {
+		t.Fatalf("loadConfig with audio state alongside shortcuts: %v", err)
 	}
 }

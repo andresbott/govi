@@ -38,10 +38,13 @@ to main and on PRs. `release.yml` runs on `v*.*.*` tags — see
 |---|---|---|
 | Key-string parser, keymap merge/dup detection | `app/player/keymap_test.go` | table-driven (`tests := []struct{...}`) |
 | Track-list parsing, zoom/aspect mapping | `app/player/tracks_test.go` | table-driven |
-| Size/bitrate/rate formatters | `app/player/format_test.go` | table-driven |
+| Size/bitrate/rate/duration formatters, path splitting | `app/player/format_test.go` | table-driven |
+| Info-overlay grouping: sections, per-kind track lists, `—`/`none` fallbacks | `app/player/mediainfo_test.go` | builds a `mediaInfo` literal and asserts on `infoSections` — no mpv handle, which is what keeps the grouping mpv-free |
 | Help-row generation, chord labels | `app/player/overlay_help_test.go` | table-driven |
 | Menu model building | `app/player/menu_test.go` | builds `Player{}` without a window — `buildMenu`/`trackSubmenu` tolerate `p.mpv == nil`; preserve that |
 | Placeholder load fallback | `app/player/idle_test.go` | temp files |
+| Observed position/duration cache, and that the seek and control-bar paths use it | `app/player/playback_test.go`, `playback_controls_test.go` | a `Player{}` with **no** mpv handle is the assertion: a synchronous property read would panic, which is how "never read mpv from the render thread" (player.md invariant 6) stays pinned |
+| That every keyboard route to progress reveals the bar and flashes no text | `app/player/seek_end_mpv_test.go` (`TestKeyboardProgressActionsRevealBarNotText` and the two per-action tests) | needs a real headless mpv with a clip loaded: `runSeek` reveals only after mpv accepts the command, so an uninitialized handle would pass the test vacuously |
 | Config load, name validation, defaults merge | `app/cmd/config_test.go` | temp YAML files |
 | CLI flags/help/version | `app/cmd/root_test.go` | cobra command execution |
 | Log levels, mpv level mapping | `internal/logging/logging_test.go` | table-driven |
@@ -49,6 +52,16 @@ to main and on PRs. `release.yml` runs on `v*.*.*` tags — see
 **Convention:** anything computing *what* to display or *how* to interpret
 data lives in a function with no Gio/GLFW/mpv imports and gets a table-driven
 test. Only the thin layout/dispatch glue stays untested.
+
+**Headless-mpv helpers** (`seek_end_mpv_test.go`): `headlessPlayer` registers the
+playback observers the way `initMpv` does, and `waitPlaying` routes property
+changes into the cache as it drains the queue — standing in for the event pump,
+which these tests do not run (it calls `glfw.PostEmptyEvent` on end-file, and
+there is no GLFW here). A test that seeks without going through `waitPlaying`
+sees a position of 0. Don't run `forwardMpvLogs` alongside `headlessPlayer`
+either: its cleanup drains the queue too, and `mpv_wait_event` forbids two
+consumers — build the handle inline instead (see
+`TestPumpRoutesObservedPlaybackProps`).
 
 ## Lint notes
 

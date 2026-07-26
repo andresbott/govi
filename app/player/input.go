@@ -11,7 +11,7 @@ import (
 
 // registerCallbacks forwards GLFW input to Gio's router so overlay widgets
 // receive pointer events; events Gio doesn't consume fall through to player
-// shortcuts (click video = toggle pause, space = toggle pause, q = quit).
+// shortcuts (double-click video = fullscreen, space = toggle pause, q = quit).
 func (p *Player) registerCallbacks() {
 	var btns pointer.Buttons
 	beginning := time.Now()
@@ -26,6 +26,7 @@ func (p *Player) registerCallbacks() {
 			scale, _ = w.GetContentScale()
 		}
 		lastPos = f32.Point{X: float32(xpos) * scale, Y: float32(ypos) * scale}
+		p.revealControls(time.Now()) // brings the auto-hiding control bar up
 		p.router.Queue(pointer.Event{
 			Kind:     pointer.Move,
 			Position: lastPos,
@@ -56,6 +57,7 @@ func (p *Player) registerCallbacks() {
 		default:
 			return
 		}
+		p.revealControls(time.Now()) // a click counts as activity too
 		p.router.Queue(pointer.Event{
 			Kind:     kind,
 			Source:   pointer.Mouse,
@@ -70,8 +72,8 @@ func (p *Player) registerCallbacks() {
 		}
 
 		// If Gio consumed the click (a widget is animating a response), it
-		// schedules a wakeup; otherwise treat a primary click on the video
-		// itself as play/pause.
+		// schedules a wakeup; otherwise the click landed on the video itself
+		// (see handlePrimaryClick — a single click there does nothing).
 		if _, ok := p.router.WakeupTime(); !ok && btn == pointer.ButtonPrimary && action == glfw.Press {
 			lastPrimaryPress = p.handlePrimaryClick(lastPrimaryPress)
 		}
@@ -130,25 +132,56 @@ func (p *Player) dispatchKey(chord keyChord, repeated bool, now time.Time) {
 	a.fn(p)
 }
 
+// doubleClickWindow is how close two primary presses have to be to count as a
+// double click.
+const doubleClickWindow = 400 * time.Millisecond
+
+// clickOutcome is what an unconsumed primary click does. There is deliberately
+// no "toggle pause" outcome: pausing by clicking anywhere on the video was
+// removed 2026-07-26 (too easy to trigger by accident), leaving pause to the
+// control bar's play button, the play-pause shortcut, and the menu entry.
+type clickOutcome int
+
+const (
+	// clickNothing records the press for double-click tracking and does nothing
+	// else — the plain single click on the video.
+	clickNothing clickOutcome = iota
+	clickCloseMenu
+	clickFullscreen
+)
+
+// primaryClickOutcome decides what a primary click does, given whether the menu
+// is open and when the previous press landed. Pure so the decision is testable
+// without a window (toggleFullscreen and closeMenu both need one).
+//
+// The menu wins over the double click: closing it must not also count toward a
+// pair, or dismissing a menu could throw the window into fullscreen. A zero
+// lastPress is the first press of the session, which cannot complete a pair.
+func primaryClickOutcome(menuOpen bool, now, lastPress time.Time) clickOutcome {
+	switch {
+	case menuOpen:
+		return clickCloseMenu
+	case !lastPress.IsZero() && now.Sub(lastPress) < doubleClickWindow:
+		return clickFullscreen
+	default:
+		return clickNothing
+	}
+}
+
 // handlePrimaryClick reacts to a primary click that Gio did not consume and
-// returns the new last-press timestamp for double-click tracking.
+// returns the new last-press timestamp for double-click tracking. Menu item
+// clicks are handled by Gio via the router and never reach here.
 func (p *Player) handlePrimaryClick(lastPress time.Time) time.Time {
-	// A primary click while the menu is open closes it instead of toggling
-	// pause; menu item clicks are handled by Gio via the router and won't
-	// reach here.
-	if p.overlay == overlayMenu {
+	now := time.Now()
+	switch primaryClickOutcome(p.overlay == overlayMenu, now, lastPress) {
+	case clickCloseMenu:
 		p.closeMenu()
 		return lastPress
-	}
-	// Double click toggles fullscreen; the single-click pause from the first
-	// press is undone so playback state is unchanged.
-	now := time.Now()
-	if now.Sub(lastPress) < 400*time.Millisecond {
-		p.togglePause()
+	case clickFullscreen:
 		p.toggleFullscreen()
-		return time.Time{}
+		return time.Time{} // consumed: a third click starts a new pair
+	case clickNothing:
 	}
-	p.togglePause()
 	return now
 }
 

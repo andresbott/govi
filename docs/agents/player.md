@@ -16,16 +16,44 @@ path, cfg)` — empty path starts on the idle screen. See
 3. **Exactly one `WaitEvent` consumer.** `forwardMpvLogs` (`mpvlog.go`) is the
    only goroutine pumping mpv's event queue — `mpv_wait_event` must not be
    called from two threads. It also handles the `idle-active` property change
-   (→ `p.idle` atomic; FormatFlag arrives as int 0/1, not bool) and
-   `end-file`/`start-file` (→ `p.eofPending` atomic, see auto-advance below).
+   (→ `p.idle` atomic; FormatFlag arrives as int 0/1, not bool),
+   `end-file`/`start-file` (→ `p.eofPending` atomic, see auto-advance below),
+   `time-pos`/`duration` (→ `p.obsPos`/`p.obsDur` atomics, see below) and
+   `volume` (→ `p.obsVol`).
 4. **Shutdown order is strict** (deferred in `Run`): `quit` command → wait for
    the pump to drain and exit on `EventShutdown` (3 s timeout) →
    `render.Free()` → `TerminateDestroy()`. libmpv forbids
    `terminate_destroy` while a thread is in `wait_event`, and the render
    context must be freed before terminate.
-5. Cross-thread state uses the three documented atomics only: `needsRender`,
-   `idle`, `eofPending`. Everything else on `Player` is main-loop-only.
-6. **The loop must exit on two conditions**, not one: `window.ShouldClose()`
+5. Cross-thread state uses the documented atomics only: `needsRender`, `idle`,
+   `eofPending`, `obsPos`, `obsDur`, `obsVol`. Everything else on `Player` is
+   main-loop-only.
+6. **Never read an mpv property synchronously from the main loop.**
+   `mpv_get_property` waits for the playback core, which after a seek is busy
+   re-syncing: the call then blocks for mpv's internal 200 ms render timeout,
+   `RenderGL` cannot run, and mpv logs
+   `mpv_render_context_render() not being called or stuck.` while dropping the
+   frames it had queued — the video visibly stutters on every seek. This is the
+   documented hazard in `render.h` ("if you call normal libmpv API functions on
+   the renderer thread, deadlocks can result … made non-fatal with timeouts").
+   Playback position and duration are therefore **observed**, not read:
+   `observePlayback` (`playback.go`) registers them in `initMpv`, the pump
+   caches them via `notePlaybackProp`, and the loop reads `playbackPos()` /
+   `playbackDur()`. Measured on a 180 s 720p clip: 7 seeks produced 7 stuck
+   warnings and 200 ms stalls before, 0 and none after. `propFloat` and friends
+   are fine for the info overlay (once a second, no flash) but must not move
+   into any per-frame path — that includes the control bar, whose knob follows
+   playback through `syncProgressKnob`. mpv sends a property change with **no
+   value** when one becomes unavailable (both do on stop), which
+   `notePlaybackProp` maps to 0 so a stale position cannot survive into the
+   next file. **`volume` is observed for the same reason** (`observeVolume` /
+   `noteVolumeProp` / `volumeLevel()` in `volume.go`, userdata 4): the bar's
+   volume slider and its button glyph both read the level on every frame the bar
+   is visible. The one synchronous `propInt("volume")` left is in `noteVolumeChanged`,
+   which runs off a key press rather than per frame — and it publishes what it
+   read into the cache, so the slider does not sit stale until mpv's own
+   notification lands a frame or more later.
+7. **The loop must exit on two conditions**, not one: `window.ShouldClose()`
    (quit action / window close button) *and* `ctx.Err() != nil` (SIGINT /
    SIGTERM). `app/cmd` installs `signal.NotifyContext`, which disables Go's
    default kill-on-SIGINT, so a loop that only checks `ShouldClose` makes
@@ -57,7 +85,8 @@ path, cfg)` — empty path starts on the idle screen. See
   end instead of overshooting it — so it never reports end-of-file and
   auto-advance alone would leave the tail of the file playing. `seek` and
   `seekPercent` therefore check `time-pos + step >= duration` first and continue
-  with the next entry instead of sending the command. Measured: a plain 5 s seek
+  with the next entry instead of sending the command — from the observed values
+  (threading invariant 6), never a synchronous read. Measured: a plain 5 s seek
   does overshoot and yields `eof`, while repeated 10 % seeks on a real MP4 sit at
   ~56 s of 60 s forever (`TestSeekPercentPastEndAdvancesOnRealFile` pins it with
   a real encoded file — a synthetic lavfi source does *not* reproduce the
@@ -129,9 +158,16 @@ through to player behavior (`registerCallbacks` in `input.go`):
 - Right-click press → `openMenu(cursor)` — rebuilds `menuItems` from the
   registry + live `track-list` every open.
 - Primary click: if Gio consumed it (`router.WakeupTime()` set), do nothing;
-  else if menu open, close menu; else toggle pause.
-- Primary-click fall-through is suppressed while the preferences overlay is
-  open (clicking the panel background must not toggle pause).
+  otherwise `primaryClickOutcome` decides — menu open closes the menu, a second
+  press inside `doubleClickWindow` toggles fullscreen, and anything else does
+  **nothing**. Clicking the video to pause was removed 2026-07-26 (too easy to
+  hit by accident): pause is the control bar's play button, the `play-pause`
+  shortcut, and the menu entry. Don't re-add it — and note the menu branch
+  deliberately outranks the double click, so dismissing a menu with a quick
+  second click cannot also throw the window into fullscreen.
+- The decision is a pure function returning a `clickOutcome` precisely because
+  both of its effects (`closeMenu`, `toggleFullscreen`) need a real GLFW window;
+  the effects are untestable glue, the decision is table-tested.
 - Keys still dispatch while overlays are open (no text inputs, no focus
   juggling — a design choice, keep it).
 
@@ -147,8 +183,28 @@ through to player behavior (`registerCallbacks` in `input.go`):
   becomes event-driven, the flash needs a wakeup. `layout.S` only relaxes
   `Min.Y`, so `layoutOSD` zeroes `Constraints.Min` — otherwise the panel reports
   full window width and sits flush left instead of centered.
+- **Every flash is a snapshot.** It used to have a second mode: a progress flash
+  that re-read `time-pos` from the loop (`osdProgress`/`refreshOSD`) because mpv
+  applies a seek asynchronously. That went away on 2026-07-26 along with
+  `progressStatus` and `humanClock` — the control bar reports progress now, and
+  its knob re-reads the observed position every frame anyway, so the mechanism
+  had no second user. Don't reintroduce a self-updating flash for progress; if
+  another live value ever needs one, the loop hook is the place, not `flash`.
 - Info overlay reads mpv props into `infoCache` at most once per second
-  (loop-driven, `player.go`); cache is dropped when closed.
+  (loop-driven, `player.go`); cache is dropped when closed. The split is
+  deliberate: `overlay_info.go` owns the mpv reads (`mediaInfo()`) and the Gio
+  layout, `mediainfo.go` owns the `mediaInfo` value and `infoSections` — which
+  is mpv- and Gio-free, so the grouping and every fallback are table-tested
+  (`mediainfo_test.go`). Add a field to `mediaInfo` and read it in
+  `mediaInfo()`; don't reach for a property from the formatting side.
+- Duration comes from `playbackDur()` (observed, invariant 6), not a
+  `propFloat("duration")` read — the overlay would otherwise reintroduce a
+  synchronous read of a property already in the cache.
+- Each track kind gets a section even with zero tracks, rendering `none`: an
+  absent section reads as missing data, which is a different thing from a file
+  having no subtitles. Every track of a kind is listed, not just the selected
+  one (`▶` marks that); a kind's non-track rows (resolution, bitrate, channels)
+  follow its track rows in the same section.
 - Help overlay derives rows from `defaultActions()` + effective keymap at
   layout time (`helpRows`); `chordLabel` must render names users can type
   back into config — keep it in sync with the parser's `namedKeys`.
@@ -174,33 +230,130 @@ through to player behavior (`registerCallbacks` in `input.go`):
   beside the column, flipping left at the right edge. Selection runs
   `onSelect` then `closeMenu()`.
 
-## On-video widgets (pattern kept for later, currently unused)
+## Control bar (on-video widgets)
 
-The player used to draw a translucent play/pause button over the video; it
-was removed 2026-07-25 (playback is keyboard/menu driven for now) but the
-pattern is proven and will come back for richer controls. To draw a clickable
-widget over the video, give `Player` a `widget.Clickable` field, then in
-`layoutUI` (`ui.go`) after the idle branch:
+`controls.go` draws the bottom bar: play button, seek bar, mute button, volume
+slider. It is the live example of the on-video widget pattern — `frame()` already
+routes pointer events through Gio's router, and the primary-click fall-through in
+`input.go` checks `router.WakeupTime()`, so clicks a widget consumes don't also
+toggle pause. Points that will bite if changed:
 
-```go
-if p.playBtn.Clicked(gtx) { // consume clicks BEFORE Layout (see menu.go)
-    p.togglePause()
-}
-dims := layout.S.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-    return layout.Inset{Bottom: unit.Dp(40)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-        gtx.Constraints.Min.X = 0
-        gtx.Constraints.Max.X = gtx.Dp(unit.Dp(160))
-        btn := material.Button(p.theme, &p.playBtn, label) // label: "Play"/"Pause" from p.paused
-        btn.Background = color.NRGBA{A: 0xb0}              // panelBG alpha
-        btn.Inset = layout.UniformInset(unit.Dp(12))
-        return btn.Layout(gtx)
-    })
-})
-```
-
-That is all: `frame()` already routes pointer events through Gio's router,
-and the primary-click fall-through in `input.go` checks
-`router.WakeupTime()`, so clicks the widget consumes don't also toggle pause.
+- **All pointer handling lives in `updateControls`**, called once at the top of
+  `layoutControls` and *before* any widget's `Layout`. It is split out so the
+  wiring is testable without the flex geometry (`controls_ui_test.go` drives it
+  through a real `input.Router` with no display).
+- **Clicks are consumed before `Layout`**, like menu rows: `Clickable.Layout`
+  drains pending click events, so a `Clicked` check after it never fires. This is
+  the ordering `updateControls` exists to guarantee for both buttons.
+- **`widget.Float` owns each knob's position, and the drag wins over the
+  property.** Per slider, `Update` is called first; if it reports a change the
+  value came from the pointer and drives the effect (scrub / set volume), and only
+  when *not* dragging is `Value` overwritten from mpv (`time-pos` / `volume`).
+  Reversing that order makes the knob snap back mid-drag.
+- **The two sliders are the same widget** (`layoutSlider`), so a volume drag
+  behaves exactly like a scrub; only the width differs, since both share
+  `filledColor`. Keep their `Update`/`Value` pairs distinct — wiring the volume
+  `Float` to `scrub` (or vice versa) would jump playback on a volume change, which
+  is what `TestPressingTheVolumeSliderLeavesTheProgressKnobAlone` pins.
+- **`barDragging()` is either slider**, not just `progress`: it feeds
+  `controlsVisible`/`controlsAlpha`, so a slow volume drag must hold the bar up
+  the same way a slow scrub does.
+- **The drag area is inset by `knobGrab` at both ends** (`layoutSlider`), so
+  `Float.Value` 0..1 maps onto the knob's own travel and the circle stays
+  inside the row at 0 % and 100 %. `knobGrab` is the hit radius passed to
+  `Float.Layout` and also sets the row height; `knobRadius` is only the drawn
+  circle, so the visible knob can shrink without shrinking the pointer target.
+  Insetting by `knobRadius` instead would let the grab area overhang the row.
+- **The volume slider is `Rigid` at a fixed `volumeBarWidth`** (120 dp), while the
+  seek bar is the row's only `Flexed` child. The volume range is 0..`volumeMax` at
+  any window size, and a viewport-wide volume slider would read as the more
+  important of the two. Since both sliders now share the same blue fill, that width
+  difference and their positions in the row are the *only* things distinguishing
+  them — don't make the volume one flexed.
+- **`volumeMax` and mpv's `volume-max` option must stay equal** — `initMpv` takes
+  the option string from `volumeMaxOption()` so they cannot drift. The slider maps
+  its full travel onto 0..`volumeMax`: a larger mpv ceiling leaves part of the
+  range unreachable, and a smaller one lets the knob ask for a level mpv silently
+  clamps, so the knob then sits where the volume isn't.
+- **`volumeTarget` rounds to a whole percent.** The shortcuts step in whole
+  percents and the saved level is an int, so a drag landing on 44.999… (which is
+  what `float32(0.45)` scales to) would persist and reload as a value the keyboard
+  can never reproduce. mpv itself accepts fractions.
+- **The volume button is a mute toggle, and its glyph is the mute/level state** —
+  not what the click will do, unlike the play button. That is the convention every
+  other player uses, and the level half of it is why `volume` has to be observed:
+  `volumeIcon` reads it per frame.
+- **The level and mute flag persist across runs, debounced.** Every change path
+  arms `volumeSavePending` (`noteVolumeChange`, called from `noteVolumeChanged` for
+  the keyboard/menu and from `setVolume` for the drag, which already knows the level
+  it just set), and the loop calls `saveVolumeIfDue` — which writes only once the level
+  has been still for `volumeSaveDelay` (500 ms). The debounce is not optional: a
+  drag fires a set-volume per pointer move, so an immediate save would rewrite
+  config.yaml dozens of times per drag. `loop` also defers `flushVolumeSave`, since
+  a change made inside the last 500 ms before quitting would otherwise be lost, and
+  nothing waits out the delay on the way down. Both go through `saveVolumeNow`,
+  which **disarms before running the callback and on every outcome** — an armed
+  save that survived its own attempt would retry each frame, which for a failing
+  write means flooding the log. Nothing pending writes nothing, so merely opening
+  and closing the player does not rewrite the file.
+- **The restore is an mpv option, not a property.** `mpvOptions` sets `volume`
+  before `Initialize` so playback *starts* at the saved level instead of stepping
+  up to it audibly over the first frames; mute is a property, so `applyAudioState`
+  runs right after `initMpv`. `mpvOptions` is split out of `initMpv` purely because
+  `initMpv` builds a GL render context and so needs a GLFW context no display-free
+  test has.
+- **An unset level must stay distinct from a saved 0.** `Config.Volume` is a
+  `*int`: nil leaves mpv's own default alone, so a fresh install does not start
+  either muted or at full blast. `app/cmd` carries the same distinction as the
+  `volumeUnset` sentinel — a pointer field there would not work, because bumbu
+  allocates nil pointers before unmarshalling and an absent key would come back as
+  a set 0 (see `config.go`). A hand-edited out-of-range level is clamped by
+  `startVolume`, not rejected.
+- **Scrubbing uses `absolute+keyframes`** (`seekAbsoluteCommand`), not `exact`:
+  a drag fires a seek per pointer move, and exact seeks would decode up to every
+  intermediate frame. Verified end to end — one drag produced
+  `target="14.462" flags="absolute+keyframes"` … `target="50.227"`.
+- **Auto-hide is state-free**: `controlsVisible(now, lastInput, dragging)`
+  compares `gtx.Now` against the last pointer input, fed by `revealControls`
+  from the cursor and button callbacks. No timer needed (the loop renders every
+  `idleFrame`, same as the status flash); if that ever becomes event-driven, the
+  bar needs a wakeup too. `dragging` overrides the timeout so a slow scrub
+  cannot make the bar vanish under the pointer, and a zero `lastInput` means the
+  pointer has not moved yet, so the bar starts hidden.
+- **The bar is also the keyboard's progress readout.** `revealControls` is not
+  pointer-only: `runSeek` (`seek.go`) calls it after mpv accepts a seek, and the
+  `progress` action (`o`) is nothing but a call to it. That is what replaced the
+  text flash on 2026-07-26 — no separate re-read machinery is needed, since
+  `syncProgressKnob` already re-reads the observed position every frame. Note
+  `runSeek` reveals *after* the command succeeds, so a rejected seek shows
+  nothing; a test with an uninitialized mpv handle therefore never exercises the
+  reveal (see `TestSeekRevealsTheControlBar`, which loads a real clip).
+- **The same holds for volume**: `noteVolumeChanged` reveals the bar, so
+  `up`/`down`, `+`/`-`, `m` and the menu entries all show the slider moving (and
+  the glyph changing, for mute). It draws **no text** — the `Volume 45%` / `Muted`
+  flash was removed on 2026-07-26 along with `volumeStatus`, exactly as the progress
+  flash went; the bar is the whole readout. Don't reintroduce it. `changeVolume` and
+  `toggleMute` both call `noteVolumeChanged`, so that is the single place the reveal,
+  the mpv read-back and the save are wired.
+- **The fade is derived, not animated**: `controlsAlpha` computes opacity from
+  the same two timestamps (`controlsFade`, 150 ms), and every colour goes through
+  `fadeColor`. Three details are load-bearing. `controlsVisible`'s window is
+  `controlsHideAfter + controlsFade`, or the fade-out would be cut off mid-ramp.
+  `revealControls` moves `revealedAt` back by the alpha the bar already has, so
+  re-revealing a half-faded bar resumes from where it is instead of flickering
+  through transparent, and a continuous stream of mouse moves does not restart
+  the fade-in on every event. `controlsFade` is not worth shrinking much below
+  its current value: at a 50 ms render tick it already spans only ~3 frames.
+- **The icons are vector paths, not text.** The Go fonts carry no media glyphs
+  at all — U+25B6 `▶`, U+23F8 `⏸` and U+1F50A `🔊` are all absent (checked
+  against `gofont.Collection`; so are `✓` and `▸`, which is why `menu.go`'s
+  markers are the way they are). `controls.go` uses `widget.Icon` over
+  `golang.org/x/exp/shiny/materialdesign/icons`, which was already an indirect
+  dependency and is BSD-3 (allowlisted). The three volume glyphs live in
+  `volume.go` next to the state that selects between them, not with the
+  play/pause pair.
+- Layer order in `layoutUI`: control bar first, then the flash, then the
+  overlays — so a panel or a flash wins any pixel it shares with the bar.
 
 ## Error-handling policy
 

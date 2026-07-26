@@ -1,6 +1,9 @@
 package player
 
-import "testing"
+import (
+	"math"
+	"testing"
+)
 
 func TestHumanBytes(t *testing.T) {
 	tests := []struct {
@@ -39,27 +42,6 @@ func TestHumanBitrate(t *testing.T) {
 	}
 }
 
-func TestHumanClock(t *testing.T) {
-	tests := []struct {
-		in   float64
-		want string
-	}{
-		{0, "0:00"},
-		{9, "0:09"},
-		{59.9, "0:59"}, // truncated, never rounded up to :60
-		{60, "1:00"},
-		{125, "2:05"},
-		{3600, "1:00:00"},
-		{3661, "1:01:01"},
-		{-5, "0:00"}, // mpv can report a small negative time-pos
-	}
-	for _, tt := range tests {
-		if got := humanClock(tt.in); got != tt.want {
-			t.Errorf("humanClock(%v) = %q, want %q", tt.in, got, tt.want)
-		}
-	}
-}
-
 func TestHumanRate(t *testing.T) {
 	tests := []struct {
 		in   float64
@@ -72,6 +54,52 @@ func TestHumanRate(t *testing.T) {
 	for _, tt := range tests {
 		if got := humanRate(tt.in); got != tt.want {
 			t.Errorf("humanRate(%v) = %q, want %q", tt.in, got, tt.want)
+		}
+	}
+}
+
+func TestHumanDuration(t *testing.T) {
+	tests := []struct {
+		in   float64
+		want string
+	}{
+		{0, "—"},
+		{-1, "—"},
+		{math.NaN(), "—"},
+		{math.Inf(1), "—"},
+		{5, "0:05"},
+		{65, "1:05"},
+		{599.4, "9:59"},
+		{3600, "1:00:00"},
+		{3661, "1:01:01"},
+		{7325.6, "2:02:06"},
+	}
+	for _, tt := range tests {
+		if got := humanDuration(tt.in); got != tt.want {
+			t.Errorf("humanDuration(%v) = %q, want %q", tt.in, got, tt.want)
+		}
+	}
+}
+
+func TestSplitPath(t *testing.T) {
+	tests := []struct {
+		in       string
+		wantDir  string
+		wantName string
+	}{
+		{"", "", ""},
+		{"/home/u/videos/clip.mp4", "/home/u/videos", "clip.mp4"},
+		{"clip.mp4", "", "clip.mp4"},
+		{"videos/clip.mp4", "videos", "clip.mp4"},
+		{"/clip.mp4", "/", "clip.mp4"},
+		// A URL is left whole — filepath would mangle the scheme.
+		{"https://example.com/stream.m3u8", "", "https://example.com/stream.m3u8"},
+		{"rtmp://host/live", "", "rtmp://host/live"},
+	}
+	for _, tt := range tests {
+		dir, name := splitPath(tt.in)
+		if dir != tt.wantDir || name != tt.wantName {
+			t.Errorf("splitPath(%q) = (%q, %q), want (%q, %q)", tt.in, dir, name, tt.wantDir, tt.wantName)
 		}
 	}
 }

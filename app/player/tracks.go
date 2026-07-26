@@ -3,6 +3,7 @@ package player
 import (
 	"fmt"
 	"math"
+	"strings"
 )
 
 // trackInfo is one entry from mpv's track-list, normalized for the menu.
@@ -76,6 +77,39 @@ func (t trackInfo) label() string {
 	default:
 		return fmt.Sprintf("%d", t.id)
 	}
+}
+
+// rowLabel names a track in the info overlay's label column, marking the one
+// that is playing.
+func (t trackInfo) rowLabel() string {
+	if t.selected {
+		return fmt.Sprintf("▶ Track %d", t.id)
+	}
+	return fmt.Sprintf("   Track %d", t.id)
+}
+
+// describe renders what is known about a track, most identifying first
+// ("h264, eng, Commentary"). Empty when mpv reported nothing but an id.
+func (t trackInfo) describe() string {
+	parts := make([]string, 0, 3)
+	for _, s := range []string{t.codec, t.lang, t.title} {
+		if s != "" {
+			parts = append(parts, s)
+		}
+	}
+	return strings.Join(parts, ", ")
+}
+
+// tracksOfKind picks the tracks of one mpv track type ("video", "audio",
+// "sub"), preserving track-list order.
+func tracksOfKind(tracks []trackInfo, kind string) []trackInfo {
+	var of []trackInfo
+	for _, t := range tracks {
+		if t.kind == kind {
+			of = append(of, t)
+		}
+	}
+	return of
 }
 
 // zoomToVideoZoom maps a user-facing zoom factor (0.5×, 1×, 1.5×, 2×) to

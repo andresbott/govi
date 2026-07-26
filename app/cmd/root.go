@@ -77,6 +77,9 @@ func newRootCommand() *cobra.Command {
 			pc.SaveShortcuts = func(sc map[string][]string) error {
 				return saveShortcuts(cfgPath, sc)
 			}
+			pc.SaveAudioState = func(volume int, muted bool) error {
+				return saveAudioState(cfgPath, volume, muted)
+			}
 			return runPlayer(cmd.Context(), path, pc)
 		},
 	}
