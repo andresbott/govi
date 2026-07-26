@@ -216,14 +216,14 @@ func Run(ctx context.Context, path string, cfg Config) error {
 	if err := p.initWindow(); err != nil {
 		return err
 	}
-	defer glfw.Terminate()
-	defer p.window.Destroy()
+	defer p.timeTeardown("glfw.Terminate", glfw.Terminate)
+	defer p.timeTeardown("window.Destroy", p.window.Destroy)
 	p.log.Debug("window and GL context ready", "elapsed", time.Since(start))
 
 	if err := p.initGio(); err != nil {
 		return err
 	}
-	defer p.gpuCtx.Release()
+	defer p.timeTeardown("gio.Release", p.gpuCtx.Release)
 	p.log.Debug("gio renderer ready", "elapsed", time.Since(start))
 
 	img := loadPlaceholder(cfg.PlaceholderImage, p.log)
@@ -247,14 +247,16 @@ func Run(ctx context.Context, path string, cfg Config) error {
 		close(logsDone)
 	}()
 	defer func() {
-		_ = p.mpv.Command([]string{"quit"}) // best-effort shutdown
-		select {
-		case <-logsDone:
-		case <-time.After(3 * time.Second):
-			p.log.Warn("mpv log pump did not stop in time")
-		}
-		p.render.Free()
-		p.mpv.TerminateDestroy()
+		p.timeTeardown("mpv.quit", func() {
+			_ = p.mpv.Command([]string{"quit"}) // best-effort shutdown
+			select {
+			case <-logsDone:
+			case <-time.After(3 * time.Second):
+				p.log.Warn("mpv log pump did not stop in time")
+			}
+		})
+		p.timeTeardown("render.Free", p.render.Free)
+		p.timeTeardown("mpv.TerminateDestroy", p.mpv.TerminateDestroy)
 	}()
 
 	// Stop warming neighbours before mpv goes away; the reads are best-effort
@@ -467,6 +469,35 @@ func (p *Player) initMpv(startVol *int) error {
 	return nil
 }
 
+// timeTeardown runs one shutdown step and logs how long it took, so `--log
+// debug` shows where exit time goes (mpv's audio-device drain and hwdec release
+// dominate on most machines).
+func (p *Player) timeTeardown(step string, fn func()) {
+	start := time.Now()
+	fn()
+	p.log.Debug("teardown step done", "step", step, "took", time.Since(start))
+}
+
+// hideWindows unmaps the player windows without destroying them. Called first
+// on the way out: the rest of the teardown (mpv terminate, GL context release)
+// takes hundreds of milliseconds during which the window would otherwise sit
+// on screen, making the exit feel slow. Unmapping is safe here — the GL context
+// stays current and valid for render.Free/gpuCtx.Release, which run after.
+func (p *Player) hideWindows() {
+	if p.prefsWin != nil {
+		p.prefsWin.win.Hide()
+	}
+	// Hide does nothing to a fullscreen window, so drop back to windowed first.
+	// No frame is drawn in between, so the windowed size is never presented.
+	if p.window.GetMonitor() != nil {
+		p.window.SetMonitor(nil, p.winX, p.winY, p.winW, p.winH, 0)
+	}
+	p.window.Hide()
+	// Push the unmap to the display server now instead of leaving it queued
+	// until the next event-queue poll, which the shutdown path never does.
+	glfw.PollEvents()
+}
+
 func (p *Player) loop(ctx context.Context) error {
 	loopStart := time.Now()
 	firstFrame := false
@@ -476,6 +507,11 @@ func (p *Player) loop(ctx context.Context) error {
 	// half second before quitting is not lost. saveVolumeIfDue only writes once
 	// the change has settled, which a shutdown never waits for.
 	defer p.flushVolumeSave()
+
+	// Registered after the two above so it runs before them (defers are LIFO):
+	// nothing on the way out — not the config write, not mpv's teardown — should
+	// happen while the window is still on screen.
+	defer p.timeTeardown("hideWindows", p.hideWindows)
 
 	// A signal can arrive while the loop sleeps in WaitEventsTimeout, so wake
 	// it as soon as ctx is cancelled instead of waiting out the timeout.
@@ -495,6 +531,14 @@ func (p *Player) loop(ctx context.Context) error {
 
 		if err := ctx.Err(); err != nil {
 			p.log.Info("shutting down", "reason", err)
+			return nil
+		}
+
+		// A quit shortcut or the window's close button only sets the flag from
+		// inside a callback, so check it here rather than waiting for the loop
+		// condition: the rest of this iteration would render one more frame and
+		// block on vsync in SwapBuffers, adding a frame's delay to every exit.
+		if p.window.ShouldClose() {
 			return nil
 		}
 
