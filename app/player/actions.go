@@ -76,7 +76,7 @@ func defaultActions() []action {
 		{actVolumeUp, "Volume Up", []string{"up", "+"}, func(p *Player) { p.changeVolume(5) }, true, repeatContinuous},
 		{actVolumeDown, "Volume Down", []string{"down", "-"}, func(p *Player) { p.changeVolume(-5) }, true, repeatContinuous},
 		{actMute, "Mute", []string{"m"}, (*Player).toggleMute, true, 0},
-		{actProgress, "Show Progress", []string{"o"}, (*Player).showProgress, true, 0},
+		{actProgress, "Show / Hide Progress", []string{"o"}, (*Player).toggleProgress, true, 0},
 		{actInfo, "Video Info", []string{"i"}, func(p *Player) { p.toggleOverlay(overlayInfo) }, true, 0},
 		{actHelp, "Shortcut Help", []string{"?", "h"}, func(p *Player) { p.toggleOverlay(overlayHelp) }, true, 0},
 		{actPreferences, "Preferences", nil, (*Player).togglePrefs, true, 0},

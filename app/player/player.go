@@ -691,10 +691,19 @@ func (p *Player) stop() {
 	}
 }
 
-// showProgress brings the control bar up on demand (its own action), so the
-// position is reachable without moving the mouse or disturbing playback.
-func (p *Player) showProgress() {
-	p.revealControls(time.Now())
+// toggleProgress brings the control bar up on demand (its own action), so the
+// position is reachable without moving the mouse or disturbing playback, and
+// sends it away again when it is already showing. The bar *is* the progress
+// readout, so the key that summons it has to be the one that dismisses it —
+// otherwise a keyboard-only user can only get an unobstructed picture back by
+// waiting out the auto-hide.
+func (p *Player) toggleProgress() {
+	now := time.Now()
+	if controlsShowing(now, p.lastInput, p.barDragging()) {
+		p.hideControls(now)
+		return
+	}
+	p.revealControls(now)
 }
 
 // changeVolume nudges mpv's volume by delta (percent), clamped by mpv's own

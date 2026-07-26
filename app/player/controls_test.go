@@ -118,19 +118,126 @@ func TestRevealControlsShowsTheBar(t *testing.T) {
 	}
 }
 
-// The "show progress" action (o) reveals the bar rather than flashing a clock.
-// It works with no file loaded too — nothing to read, and the bar's own idle
-// handling decides what to draw.
+// The "show / hide progress" action (o) reveals the bar rather than flashing a
+// clock. It works with no file loaded too — nothing to read, and the bar's own
+// idle handling decides what to draw.
 func TestShowProgressRevealsTheControlBar(t *testing.T) {
 	p := &Player{}
 
-	p.showProgress()
+	p.toggleProgress()
 
 	if !controlsVisible(time.Now(), p.lastInput, false) {
 		t.Error("the progress action did not reveal the control bar")
 	}
 	if p.osdVisible(time.Now()) {
 		t.Errorf("the progress action flashed %q, want no text overlay", p.osdText)
+	}
+}
+
+// Pressing the key again puts the bar away: the bar is the progress readout, so
+// the key that summons it has to be the one that dismisses it — otherwise the
+// only way back to an unobstructed picture is waiting out the auto-hide.
+func TestProgressActionHidesTheBarOnASecondPress(t *testing.T) {
+	p := &Player{}
+
+	p.toggleProgress()
+	p.toggleProgress()
+
+	if controlsShowing(time.Now(), p.lastInput, false) {
+		t.Error("the second press left the control bar up")
+	}
+}
+
+// A third press brings it back, so the toggle is not a one-way trip.
+func TestProgressActionTogglesBackOn(t *testing.T) {
+	p := &Player{}
+
+	p.toggleProgress()
+	p.toggleProgress()
+	p.toggleProgress()
+
+	if !controlsShowing(time.Now(), p.lastInput, false) {
+		t.Error("a third press did not bring the control bar back")
+	}
+}
+
+// While a knob is held the bar must stay up: hiding it would drop the control
+// out from under the pointer mid-drag.
+func TestProgressActionDoesNotHideTheBarWhileDragging(t *testing.T) {
+	if !controlsShowing(time.Now(), time.Time{}, true) {
+		t.Error("a dragged slider does not count as showing, so o would try to reveal instead of leaving it alone")
+	}
+}
+
+// hideControls fades out from wherever the bar is rather than snapping to
+// opaque and restarting: a press while the bar is half faded in must not make it
+// brighten first.
+func TestHideControlsResumesFromTheCurrentAlpha(t *testing.T) {
+	p := &Player{}
+	now := time.Now()
+	p.revealControls(now)
+	// Halfway through the fade-in.
+	mid := now.Add(controlsFade / 2)
+	before := controlsAlpha(mid, p.lastInput, p.revealedAt, false)
+
+	p.hideControls(mid)
+
+	after := controlsAlpha(mid, p.lastInput, p.revealedAt, false)
+	if diff := after - before; diff > 0.05 || diff < -0.05 {
+		t.Errorf("alpha jumped from %v to %v across hideControls, want it to resume from roughly the same value", before, after)
+	}
+}
+
+// Hiding an opaque bar starts its fade-out from opaque rather than cutting it:
+// still drawn, and still fully visible on the frame the key was pressed.
+func TestHideControlsFadesAnOpaqueBarOutRatherThanCutting(t *testing.T) {
+	p := &Player{}
+	now := time.Now()
+	p.revealControls(now)
+	// Faded in, and still inside the hold window.
+	opaque := now.Add(controlsFade)
+
+	p.hideControls(opaque)
+
+	if got := controlsAlpha(opaque, p.lastInput, p.revealedAt, false); got != 1 {
+		t.Errorf("alpha on the frame an opaque bar was hidden = %v, want 1 — the fade-out must start from opaque", got)
+	}
+	if !controlsVisible(opaque, p.lastInput, false) {
+		t.Error("the bar stopped being drawn the instant it was hidden, so the fade-out is never seen")
+	}
+	// And it is genuinely on the way out, not merely held.
+	mid := opaque.Add(controlsFade / 2)
+	if got := controlsAlpha(mid, p.lastInput, p.revealedAt, false); got <= 0 || got >= 1 {
+		t.Errorf("alpha halfway through the fade-out = %v, want strictly between 0 and 1", got)
+	}
+}
+
+// The bar is hidden for good, not just for one frame: once the fade-out has run
+// its course nothing draws.
+func TestHideControlsLeavesTheBarHidden(t *testing.T) {
+	p := &Player{}
+	now := time.Now()
+	p.revealControls(now)
+
+	p.hideControls(now)
+
+	past := now.Add(controlsFade + time.Millisecond)
+	if controlsVisible(past, p.lastInput, false) {
+		t.Error("the control bar was still visible after its fade-out finished")
+	}
+}
+
+// A bar already fading out reads as *not* showing, so o brings it back instead
+// of dismissing something that is leaving anyway (which would look like the key
+// did nothing).
+func TestControlsShowingIsFalseWhileFadingOut(t *testing.T) {
+	now := time.Now()
+	last := now.Add(-controlsHideAfter - controlsFade/2)
+	if controlsShowing(now, last, false) {
+		t.Error("a bar mid-fade-out counts as showing")
+	}
+	if !controlsVisible(now, last, false) {
+		t.Fatal("test premise: the bar should still be drawn while it fades out")
 	}
 }
 

@@ -1,7 +1,6 @@
 package player
 
 import (
-	"strings"
 	"testing"
 )
 
@@ -24,20 +23,12 @@ func TestRegistryHasNextPrevVideoActions(t *testing.T) {
 }
 
 func TestNextPrevVideoDefaultKeys(t *testing.T) {
-	km, err := buildKeymap(nil)
-	if err != nil {
-		t.Fatal(err)
+	byLabel := helpRowsByLabel(t, nil)
+	if got := byLabel["Next Video"].primary; got != "pagedown" {
+		t.Errorf("Next Video primary key = %q, want \"pagedown\"", got)
 	}
-	rows := helpRows(defaultActions(), km)
-	byLabel := map[string]string{}
-	for _, r := range rows {
-		byLabel[r.label] = r.keys
-	}
-	if got := byLabel["Next Video"]; !strings.Contains(got, "pagedown") {
-		t.Errorf("Next Video keys = %q, want to contain pagedown", got)
-	}
-	if got := byLabel["Previous Video"]; !strings.Contains(got, "pageup") {
-		t.Errorf("Previous Video keys = %q, want to contain pageup", got)
+	if got := byLabel["Previous Video"].primary; got != "pageup" {
+		t.Errorf("Previous Video primary key = %q, want \"pageup\"", got)
 	}
 }
 

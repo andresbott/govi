@@ -207,7 +207,29 @@ through to player behavior (`registerCallbacks` in `input.go`):
   follow its track rows in the same section.
 - Help overlay derives rows from `defaultActions()` + effective keymap at
   layout time (`helpRows`); `chordLabel` must render names users can type
-  back into config — keep it in sync with the parser's `namedKeys`.
+  back into config — keep it in sync with the parser's `namedKeys`. A row keeps
+  its two bindings apart (`primary`/`secondary`) rather than joining them into
+  one `"space [k]"` string, so the panel can column them and label the slots the
+  way the preferences window does; a keyless action's `menu`/`unbound` marker
+  goes in `primary`, where the eye looks for a binding.
+- **The help panel is two columns, and the split is by half, not alternating**
+  (`splitHelpRows`): the left column is the first half of the registry, so
+  reading down then across preserves declaration order. 19 actions in one list
+  is 340 dp tall against 187 dp split — the reason it exists (both measured in
+  `TestHelpPanelIsShorterInTwoColumns`, which also pins that the split trades
+  height for width rather than growing both).
+- **The help cells are fixed widths, so overflow is silent.** Each of the three
+  (`helpLabelW`, `helpKeyW`, `helpAltKeyW`) carries slack over the widest string
+  it can hold; a longer action label or a newly nameable key is exactly the
+  change that would wrap or clip one, which is why
+  `TestHelpCellsFitTheirWidestText` measures every label, every default binding
+  and every entry in `namedKeys` against its column. Widen the constant rather
+  than shortening a label. Note both columns repeat the `primary`/`secondary`
+  heading — a single heading over the left one reads as covering the whole panel.
+- Measuring a panel in a test needs `Constraints.Min` zeroed: with `Min == Max`
+  (what `layout.Exact` gives) a `Flex` fills its parent and every measurement
+  comes back as the window size. `layout.Center` does that relaxing in the real
+  path, which is why `layoutHelp` itself cannot be measured directly.
 - Preferences overlay (`overlay_prefs.go`): rows rebuilt from the registry on
   open; `applyBinding` recomputes overrides, `restoreDefaults` drops one, and
   both go through `commitOverrides`, which validates with `buildKeymap`
@@ -322,12 +344,26 @@ toggle pause. Points that will bite if changed:
   pointer has not moved yet, so the bar starts hidden.
 - **The bar is also the keyboard's progress readout.** `revealControls` is not
   pointer-only: `runSeek` (`seek.go`) calls it after mpv accepts a seek, and the
-  `progress` action (`o`) is nothing but a call to it. That is what replaced the
-  text flash on 2026-07-26 — no separate re-read machinery is needed, since
+  `progress` action (`o`) reveals it too. That is what replaced the text flash on
+  2026-07-26 — no separate re-read machinery is needed, since
   `syncProgressKnob` already re-reads the observed position every frame. Note
   `runSeek` reveals *after* the command succeeds, so a rejected seek shows
   nothing; a test with an uninitialized mpv handle therefore never exercises the
   reveal (see `TestSeekRevealsTheControlBar`, which loads a real clip).
+- **`o` toggles, and `hideControls` is the mirror of `revealControls`.** Because
+  the bar *is* the readout, the key that summons it has to put it away — waiting
+  out the 1 s auto-hide is the only alternative for a keyboard-only user.
+  `revealControls` moves `revealedAt` back by the alpha the bar already has;
+  `hideControls` moves `lastInput` back past `controlsHideAfter` by the
+  complement, so the fade-out resumes at the current alpha instead of snapping to
+  opaque and starting over. Zeroing `lastInput` would also hide the bar, but
+  instantly, and a later reveal would then fade in from nothing.
+- **`controlsShowing` is not `controlsVisible`** — it is the narrower "up and
+  staying up" (inside the hold window, fade-out excluded), and it is what
+  `toggleProgress` decides on. Deciding on `controlsVisible` would make a press
+  during the fade-out re-hide a bar that is already leaving, so the key would
+  appear to do nothing. `controlsVisible` stays the drawing predicate; don't
+  merge them.
 - **The same holds for volume**: `noteVolumeChanged` reveals the bar, so
   `up`/`down`, `+`/`-`, `m` and the menu entries all show the slider moving (and
   the glyph changing, for mute). It draws **no text** — the `Volume 45%` / `Muted`
