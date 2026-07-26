@@ -16,14 +16,15 @@ path, cfg)` — empty path starts on the idle screen. See
 3. **Exactly one `WaitEvent` consumer.** `forwardMpvLogs` (`mpvlog.go`) is the
    only goroutine pumping mpv's event queue — `mpv_wait_event` must not be
    called from two threads. It also handles the `idle-active` property change
-   (→ `p.idle` atomic; FormatFlag arrives as int 0/1, not bool).
+   (→ `p.idle` atomic; FormatFlag arrives as int 0/1, not bool) and
+   `end-file`/`start-file` (→ `p.eofPending` atomic, see auto-advance below).
 4. **Shutdown order is strict** (deferred in `Run`): `quit` command → wait for
    the pump to drain and exit on `EventShutdown` (3 s timeout) →
    `render.Free()` → `TerminateDestroy()`. libmpv forbids
    `terminate_destroy` while a thread is in `wait_event`, and the render
    context must be freed before terminate.
-5. Cross-thread state uses the two documented atomics only: `needsRender`,
-   `idle`. Everything else on `Player` is main-loop-only.
+5. Cross-thread state uses the three documented atomics only: `needsRender`,
+   `idle`, `eofPending`. Everything else on `Player` is main-loop-only.
 6. **The loop must exit on two conditions**, not one: `window.ShouldClose()`
    (quit action / window close button) *and* `ctx.Err() != nil` (SIGINT /
    SIGTERM). `app/cmd` installs `signal.NotifyContext`, which disables Go's
@@ -39,6 +40,35 @@ path, cfg)` — empty path starts on the idle screen. See
   slice plus one `os.Stat` liveness check per candidate. Files added to the
   folder after opening deliberately do not appear — deletions are handled
   (skipped and dropped), additions are not.
+- **Auto-advance on end of file** (`autoadvance.go`): the event pump flags
+  `eofPending` when mpv reports `end-file`, and the loop calls
+  `handleEndOfFile` → `playAdjacent(1)`. Split that way on purpose — invariants
+  2/5: `loadfile` must run on the main loop, so the pump only sets an atomic
+  (plus `PostEmptyEvent` so the switch doesn't wait out the 50 ms timeout).
+  Only reason `eof` advances. `stop` is what *our own* `loadfile`/`stop`
+  produce, `error` is an unplayable file (advancing on it would run through the
+  whole folder as fast as mpv can fail), `quit` fires during shutdown, and
+  `redirect` is a playlist being expanded. mpv reports `eof` for a seek past
+  the end too, which is exactly why keyboard navigation off the end also
+  chains — verified with a headless-mpv test (`TestSeekPastEndReportsEOF`), so
+  don't narrow the reason check to "played through".
+- **A seek off the end needs its own handling** (`seek.go`: `passesEnd`,
+  `advancePastEnd`), because mpv *clamps* a seek to the last keyframe before the
+  end instead of overshooting it — so it never reports end-of-file and
+  auto-advance alone would leave the tail of the file playing. `seek` and
+  `seekPercent` therefore check `time-pos + step >= duration` first and continue
+  with the next entry instead of sending the command. Measured: a plain 5 s seek
+  does overshoot and yields `eof`, while repeated 10 % seeks on a real MP4 sit at
+  ~56 s of 60 s forever (`TestSeekPercentPastEndAdvancesOnRealFile` pins it with
+  a real encoded file — a synthetic lavfi source does *not* reproduce the
+  clamping). It deliberately falls through to mpv at the last entry, with no
+  playlist, or when `duration <= 0` (live stream), where the seek is either
+  harmless or mpv's idle screen is the right outcome.
+- The flag is disarmed in two places, because end-of-file and the user pressing
+  next can coincide: `loadFile` clears it (before the `p.mpv == nil` guard, so
+  the test path is covered too) and `EventStart` clears it via `noteFileStart`
+  for the reverse ordering, where the eof lands after `loadfile` already ran.
+  Without both, one PageDown at the wrong moment skips two entries.
 - `prefetcher` (`prefetch.go`) warms the OS page cache for `pl.neighbors()`
   (next first, then previous) after every playlist change, so the demuxer finds
   the container header and trailing index in memory. It reads the first 2 MiB
