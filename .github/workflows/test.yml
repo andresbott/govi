@@ -46,10 +46,17 @@ jobs:
         run: brew install mpv pkgconf
 
       - name: build darwin snapshot
+        # goreleaser is NOT preinstalled on the macOS runner images, so it comes
+        # from the action here — same as the release workflow, which also keeps
+        # both jobs on the same major version.
         # exercises the full compile, cgo-link and libmpv linkage assertion.
         # NOT --single-target: that matches the *host* target, so it would exit
         # 0 having built nothing if the runner arch ever mismatched.
-        run: goreleaser build --snapshot --clean --config .goreleaser.darwin.yaml
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: goreleaser
+          version: '~> v2'
+          args: build --snapshot --clean --config .goreleaser.darwin.yaml
 
       - name: Show the resulting libmpv linkage
         # also guards against a vacuous build: no binary means failure.
