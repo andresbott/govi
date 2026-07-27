@@ -12,3 +12,7 @@
   bundle plus the cask's `app` stanza (losing automatic cask regeneration) or
   buying Pro. The `.deb` already has the equivalent via `zarf/govi.desktop`.
 - [] Make `make test` pass on macOS (headless mpv + Gio measurement tests).
+- [] image viewer ?
+  - [] selectable by the binary name, using symlincs
+  - [] selectabe by shortcut / file type
+- [] allow recursive videos with max amount configurable 
