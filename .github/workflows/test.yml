@@ -78,6 +78,13 @@ jobs:
           test -s "$app/Contents/Resources/govi.icns" || { echo "the bundle has no icon"; exit 1; }
           test -x "$app/Contents/MacOS/govi" || { echo "the bundled binary is not executable"; exit 1; }
 
+          # The minimum-OS claim the binary itself carries. bundle.VerifyMinOS
+          # (in the post-build hook) already fails the build when this disagrees
+          # with LSMinimumSystemVersion; printing it here puts the real number in
+          # every PR log, which is what would have caught v0.1.5 shipping a
+          # binary stamped with the runner's macOS 26 and unopenable from Finder.
+          vtool -show-build-version "$app/Contents/MacOS/govi" | grep -A2 'platform'
+
           dmg=$(find dist -name '*.dmg' | head -1)
           test -n "$dmg" || { echo "no .dmg was produced"; exit 1; }
           hdiutil imageinfo "$dmg" > /dev/null || { echo "the .dmg is not a readable image"; exit 1; }

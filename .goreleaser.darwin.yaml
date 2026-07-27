@@ -20,6 +20,17 @@ builds:
       - arm64
     env:
       - CGO_ENABLED=1
+      # the oldest macOS this binary is allowed to demand, and it is load-bearing
+      # rather than a nicety. cgo forces external linking, so clang — not Go —
+      # writes the LC_BUILD_VERSION load command, and with no deployment target
+      # set clang stamps the *runner's* OS version into it. macos-latest is macOS
+      # 26, so v0.1.5 shipped a binary declaring minos 26.0: Launch Services
+      # trusts that field over Info.plist and refuses to open the bundle from
+      # Finder with "you need to upgrade to 26.0", while a direct exec from a
+      # shell still works because dyld is laxer. Keep in step with minSystem in
+      # zarf/macos/main.go — the post-build hook compares the two and fails the
+      # build when they disagree.
+      - MACOSX_DEPLOYMENT_TARGET=12.0
     tags:
       # required, not cosmetic: go-mpv's default cgo path is a bare `-lmpv`,
       # and clang does not search Homebrew's /opt/homebrew/{include,lib}. The
