@@ -34,11 +34,6 @@ builds:
       - -X github.com/andresbott/govi/app/metainfo.BuildTime={{.Date}}
       - -X github.com/andresbott/govi/app/metainfo.ShaVer={{.Commit}}
     binary: govi
-    hooks:
-      post:
-        # fail the build if libmpv is not linked through the upgrade-stable
-        # Homebrew opt path (read-only check; see the script's header).
-        - ./zarf/darwin-check-libmpv.sh {{ .Path }}
 
 archives:
   - formats: [tar.gz]

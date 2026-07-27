@@ -75,8 +75,9 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Show the resulting libmpv linkage
-        # the linkage assertion already ran as a build hook; printing it makes
-        # the real dylib paths visible in the log of every release.
+        # makes the real dylib paths visible in the log of every release: they
+        # must be under /opt/homebrew/opt/mpv, not a versioned Cellar path
+        # (see docs/agents/releasing.md). Also guards against a vacuous build.
         run: |
           bin=$(find dist -name govi -type f | head -1)
           test -n "$bin" || { echo "no darwin binary was produced"; exit 1; }

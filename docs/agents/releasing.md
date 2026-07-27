@@ -59,25 +59,30 @@ Four things the darwin config must keep:
 target, so on a mismatched runner goreleaser exits 0 having produced no binary
 at all. Both workflows omit it and assert a binary exists afterwards.
 
-**goreleaser is not preinstalled on the macOS runner images** (unlike ubuntu's),
-so both darwin jobs invoke it through `goreleaser/goreleaser-action@v6` rather
-than as a bare `run:` command — a plain `run: goreleaser ...` fails with
-`command not found` (exit 127).
+## libmpv linkage
 
-`zarf/darwin-check-libmpv.sh` runs as a build post-hook and **asserts** that
-libmpv is loaded via Homebrew's opt path
-(`/opt/homebrew/opt/mpv/lib/libmpv.2.dylib`), failing the build otherwise. It
-does not rewrite anything: Homebrew's `fix_dynamic_linkage` already sets
-install names from `opt_record` rather than the versioned Cellar path, so a
-`brew upgrade mpv` doesn't break govi. Using `install_name_tool` here would
-invalidate the ad-hoc code signature Apple Silicon requires. The script's
-logic is tested on Linux via a stubbed `otool`
-(`zarf/darwin_check_libmpv_test.go`, run by `make test`).
+A cgo binary hardcodes the path of every dylib it loads — macOS dyld does no
+library search — so the concern is govi being pinned to a versioned Cellar
+path like `/opt/homebrew/Cellar/mpv/0.41.0_6/lib/libmpv.2.dylib`, which would
+stop resolving on the user's next `brew upgrade mpv`.
 
-Two failure modes are accepted because no build-time fix addresses them: a
-libmpv soname bump (needs a rebuild and a new tag) and a non-standard
+**Homebrew already prevents this**, so nothing in the build patches anything:
+`fix_dynamic_linkage` sets install names from `opt_record`, i.e.
+`/opt/homebrew/opt/mpv/lib/libmpv.2.dylib`, which is the stable symlink
+Homebrew repoints on upgrade. Both darwin jobs print `otool -L` on the built
+binary as their last step, so the real dylib paths are visible in the log of
+every PR and every release — check there if a Mac user reports govi failing to
+start.
+
+Do **not** "fix" this with `install_name_tool`: it invalidates the ad-hoc code
+signature Apple Silicon requires, forcing a re-sign step, and there is nothing
+to fix in the first place.
+
+Three failure modes are accepted because no build-time change addresses them:
+a libmpv soname bump (needs a rebuild and a new tag), a non-standard
 `HOMEBREW_PREFIX` (`/opt/homebrew` is the only supported prefix on Apple
-Silicon).
+Silicon), and Homebrew changing the above behaviour (would surface as a user
+bug report, not a red build).
 
 **What is and isn't verified.** CI proves govi *compiles and cgo-links* on
 macOS arm64 (`build-darwin` in `test.yml` runs on every PR) and that the
