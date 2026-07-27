@@ -14,14 +14,87 @@ annotated tag, and pushes it. The push triggers
 `.github/workflows/release.yml` (`v*.*.*` and `v*.*.*-*` prerelease tags),
 which runs goreleaser.
 
-## Build constraints (`.goreleaser.yaml`)
+## Build constraints
 
-- **Linux amd64 only, CGO_ENABLED=1** — govi links libmpv via cgo, so no
-  cross-compiled darwin/windows targets and never `CGO_ENABLED=0`. Adding a
-  platform means adding a native build runner, not a goarch line.
+- **Two independent goreleaser runs, one release.** govi links libmpv via cgo, so
+  a darwin binary must be compiled on macOS, and goreleaser OSS has no
+  `--split` / `continue --merge` (Pro-only). So `.goreleaser.yaml` builds
+  **linux amd64 only, CGO_ENABLED=1**, and `.goreleaser.darwin.yaml` builds
+  **darwin arm64** on a `macos-latest` runner. Adding a platform means adding a
+  native build runner, not a goarch line. Validate both with
+  `make release-check`.
 - Version info is linker-stamped into `app/metainfo` (`Version`, `BuildTime`,
   `ShaVer`); dev builds show `dev-build` and stamp `BuildTime` at init.
 - Artifacts: tar.gz archive (uname-compatible naming) plus nfpm packages.
+
+## The darwin run (`.goreleaser.darwin.yaml`)
+
+`.github/workflows/release.yml` has two jobs. `release` (ubuntu) creates the
+GitHub release and its changelog; `release-darwin` (`macos-latest`, Apple
+Silicon, free for public repos) then appends the darwin artifacts. The
+`needs: release` edge is load-bearing — the release and its notes must exist
+before the second run touches it, which is also why the darwin config sets
+`release.mode: keep-existing` and `changelog.disable: true`.
+
+Four things the darwin config must keep:
+
+- **`tags: [pkgconfig]`** — go-mpv's default cgo path is a bare `-lmpv`, and
+  clang doesn't search `/opt/homebrew/{include,lib}`. The tag switches it to
+  `pkg-config: mpv`; Homebrew's mpv formula ships `lib/pkgconfig/mpv.pc`
+  (built with `-Dlibmpv=true`). The workflow installs `pkgconf` explicitly
+  because of this.
+- **`checksums_darwin.txt`** — two runs uploading to one release must not
+  produce identically named assets, and the archive template already
+  disambiguates by OS but the checksum file does not.
+- **arm64 only** — Intel needs a `macos-*-intel` runner, billed at 12x the
+  arm64 rate per release. The generated cask has an `on_arm` block only, so
+  `brew install --cask` on an Intel Mac fails with an unsupported-architecture
+  error rather than installing an unrunnable binary.
+- **The quarantine hook** — the binary is unsigned and un-notarized, so
+  without `xattr -dr com.apple.quarantine` Gatekeeper reports "govi is
+  damaged and can't be opened". Removing this hack needs a paid Apple
+  Developer account and a notarization step.
+
+**Never add `--single-target` to the darwin build.** It matches the *host*
+target, so on a mismatched runner goreleaser exits 0 having produced no binary
+at all. Both workflows omit it and assert a binary exists afterwards.
+
+**goreleaser is not preinstalled on the macOS runner images** (unlike ubuntu's),
+so both darwin jobs invoke it through `goreleaser/goreleaser-action@v6` rather
+than as a bare `run:` command — a plain `run: goreleaser ...` fails with
+`command not found` (exit 127).
+
+## libmpv linkage
+
+A cgo binary hardcodes the path of every dylib it loads — macOS dyld does no
+library search — so the concern is govi being pinned to a versioned Cellar
+path like `/opt/homebrew/Cellar/mpv/0.41.0_6/lib/libmpv.2.dylib`, which would
+stop resolving on the user's next `brew upgrade mpv`.
+
+**Homebrew already prevents this**, so nothing in the build patches anything:
+`fix_dynamic_linkage` sets install names from `opt_record`, i.e.
+`/opt/homebrew/opt/mpv/lib/libmpv.2.dylib`, which is the stable symlink
+Homebrew repoints on upgrade. Both darwin jobs print `otool -L` on the built
+binary as their last step, so the real dylib paths are visible in the log of
+every PR and every release — check there if a Mac user reports govi failing to
+start.
+
+Do **not** "fix" this with `install_name_tool`: it invalidates the ad-hoc code
+signature Apple Silicon requires, forcing a re-sign step, and there is nothing
+to fix in the first place.
+
+Three failure modes are accepted because no build-time change addresses them:
+a libmpv soname bump (needs a rebuild and a new tag), a non-standard
+`HOMEBREW_PREFIX` (`/opt/homebrew` is the only supported prefix on Apple
+Silicon), and Homebrew changing the above behaviour (would surface as a user
+bug report, not a red build).
+
+**What is and isn't verified.** CI proves govi *compiles and cgo-links* on
+macOS arm64 (`build-darwin` in `test.yml` runs on every PR) and that the
+linkage is opt-path based. It does **not** prove govi runs: the macOS test
+suite is not green (headless mpv and Gio measurement tests need a
+display/font environment), and nobody has launched the binary on a Mac. Treat
+the first tagged release as the real test.
 
 ## Desktop integration (`.deb` only)
 

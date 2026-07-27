@@ -5,3 +5,10 @@
 - [] nice video controls
   - [] settings button
   - [x] volume button (mute toggle + volume slider, `app/player/volume.go`)
+- [] macOS `.app` bundle — a Dock icon, Launchpad entry and Finder "Open with →
+  govi" need a `govi.app` with an `Info.plist` declaring `CFBundleDocumentTypes`
+  and a `.icns` rendered from `zarf/govi.svg`. GoReleaser's `app_bundles`/`dmg`
+  sections generate exactly this but are Pro-only, so it means hand-writing the
+  bundle plus the cask's `app` stanza (losing automatic cask regeneration) or
+  buying Pro. The `.deb` already has the equivalent via `zarf/govi.desktop`.
+- [] Make `make test` pass on macOS (headless mpv + Gio measurement tests).

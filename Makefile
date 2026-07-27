@@ -56,6 +56,12 @@ build: ## use goreleaser to build for the current OS/Arch
 	# depends on https://goreleaser.com
 	@goreleaser build --snapshot --clean --single-target
 
+.PHONY: release-check
+release-check: ## validate both goreleaser configs (linux + darwin)
+	# two config files can drift; catch a schema error here, not at tag-push time
+	@goreleaser check .goreleaser.yaml
+	@goreleaser check .goreleaser.darwin.yaml
+
 #==========================================================================================
 ##@ Release
 #==========================================================================================
