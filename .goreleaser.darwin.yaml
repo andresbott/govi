@@ -1,0 +1,103 @@
+version: 2
+# =====================================================================================
+# darwin-only release config. govi links libmpv and GLFW through cgo, so darwin
+# binaries have to be compiled on macOS, and goreleaser's --split/--merge is
+# Pro-only. So this is a second, independent `goreleaser release` run (see
+# .github/workflows/release.yml) that appends its artifacts to the release the
+# linux run already created. .goreleaser.yaml stays linux-only.
+# =====================================================================================
+before:
+  hooks:
+    - go mod tidy
+builds:
+  - id: govi-darwin
+    goos:
+      - darwin
+    goarch:
+      # arm64 only: an Intel build needs a separate macos-*-intel runner, billed
+      # at 12x the arm64 rate on every tagged release, and every Mac sold since
+      # 2020 is arm64.
+      - arm64
+    env:
+      - CGO_ENABLED=1
+    tags:
+      # required, not cosmetic: go-mpv's default cgo path is a bare `-lmpv`,
+      # and clang does not search Homebrew's /opt/homebrew/{include,lib}. The
+      # pkgconfig tag switches it to `pkg-config: mpv`, and Homebrew's mpv
+      # formula ships lib/pkgconfig/mpv.pc (it is built with -Dlibmpv=true).
+      - pkgconfig
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+      - -X github.com/andresbott/govi/app/metainfo.Version={{.Version}}
+      - -X github.com/andresbott/govi/app/metainfo.BuildTime={{.Date}}
+      - -X github.com/andresbott/govi/app/metainfo.ShaVer={{.Commit}}
+    binary: govi
+    hooks:
+      post:
+        # fail the build if libmpv is not linked through the upgrade-stable
+        # Homebrew opt path (read-only check; see the script's header).
+        - ./zarf/darwin-check-libmpv.sh {{ .Path }}
+
+archives:
+  - formats: [tar.gz]
+    # same naming as the linux config, so the OS/Arch match `uname` output.
+    name_template: >-
+      govi_
+      {{- title .Os }}_
+      {{- if eq .Arch "amd64" }}x86_64
+      {{- else if eq .Arch "386" }}i386
+      {{- else }}{{ .Arch }}{{ end }}
+      {{- if .Arm }}v{{ .Arm }}{{ end }}
+    files:
+      - LICENSE
+      - README.md
+
+homebrew_casks:
+  # publish a macOS cask into this same repo (Casks/govi.rb). the repo isn't
+  # named homebrew-*, so users tap it by explicit URL — see README. the default
+  # GITHUB_TOKEN can push here.
+  - name: govi
+    binaries:
+      - govi
+    repository:
+      owner: andresbott
+      name: govi
+    directory: Casks
+    commit_author:
+      name: Andres Bott
+      email: contact@andresbott.com
+    homepage: "https://github.com/andresbott/govi"
+    description: "Minimalistic video player based on mpv"
+    url:
+      # needed for `brew audit` to pass, since the download and homepage
+      # domains differ in form.
+      verified: github.com/andresbott/govi/
+    dependencies:
+      # mpv is what supplies libmpv.2.dylib at runtime.
+      - formula: mpv
+    # the darwin binary isn't code-signed/notarized, so strip the Gatekeeper
+    # quarantine attribute on install to avoid a "govi is damaged" error.
+    hooks:
+      post:
+        install: |
+          if OS.mac?
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/govi"]
+          end
+
+release:
+  # explicit, though it is the default: this run must never touch the changelog
+  # the linux run wrote.
+  mode: keep-existing
+
+checksum:
+  # must differ from the linux run's checksums.txt — two runs upload to one
+  # release and identically named assets would collide.
+  name_template: 'checksums_darwin.txt'
+snapshot:
+  version_template: "{{ incpatch .Version }}-snapshot"
+changelog:
+  # the linux run owns the changelog; generating a second one here would be
+  # dead work.
+  disable: true
