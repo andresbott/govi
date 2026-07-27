@@ -37,3 +37,47 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # govi links libmpv/GLFW through cgo, so darwin binaries must be built on
+  # macOS. goreleaser OSS has no --split/--merge, so this is a second,
+  # independent release run that appends its artifacts to the release the linux
+  # job already created — hence `needs: release`, which also guarantees the
+  # changelog exists before this run sees it.
+  release-darwin:
+    needs: release
+    # macos-latest is Apple Silicon (arm64) and free for public repos; the
+    # -intel / -large labels are the billed x86_64 ones.
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # full history + tags are required for the version templates
+          fetch-depth: 0
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: 'go.mod'
+          cache: true
+
+      - name: Install cgo build dependencies (libmpv via mpv, pkg-config)
+        # pkgconf is installed explicitly rather than assumed present: the
+        # pkgconfig build tag makes it a hard requirement.
+        run: brew install mpv pkgconf
+
+      - name: Run GoReleaser
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: goreleaser
+          version: '~> v2'
+          args: release --clean --config .goreleaser.darwin.yaml
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Show the resulting libmpv linkage
+        # the linkage assertion already ran as a build hook; printing it makes
+        # the real dylib paths visible in the log of every release.
+        run: |
+          bin=$(find dist -name govi -type f | head -1)
+          test -n "$bin" || { echo "no darwin binary was produced"; exit 1; }
+          otool -L "$bin"
