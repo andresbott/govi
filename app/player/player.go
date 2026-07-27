@@ -69,6 +69,11 @@ type Player struct {
 	ops    op.Ops
 	theme  *material.Theme
 
+	// defVAO is the video context's default vertex array object, needed by the
+	// forward-compatible core profile (desktopGL) and re-bound every frame
+	// before Gio draws — see frame() for why once at init is not enough.
+	defVAO uint32
+
 	placeholderSrc paint.ImageOp
 	logoSrc        paint.ImageOp
 	paused         bool
@@ -381,9 +386,9 @@ func (p *Player) initWindow() error {
 		// its own pass and restores it; leaving it on globally would make
 		// mpv's already-encoded output get gamma-encoded twice.
 		// Set up default VAO, required for the forward-compatible core profile.
-		var defVBA uint32
-		gl.GenVertexArrays(1, &defVBA)
-		gl.BindVertexArray(defVBA)
+		// Kept on the Player because frame() has to re-bind it every iteration.
+		gl.GenVertexArrays(1, &p.defVAO)
+		gl.BindVertexArray(p.defVAO)
 	}
 	return nil
 }
@@ -640,6 +645,18 @@ func (p *Player) frame() error {
 	// mpv paints the whole viewport (flipY: GL's origin is bottom-left).
 	if err := p.render.RenderGL(0, width, height, true); err != nil {
 		return fmt.Errorf("mpv render: %w", err)
+	}
+
+	// mpv ends every draw with glBindVertexArray(0) (its gl_vao_unbind), and
+	// Gio shares this context: its per-frame state save/restore calls
+	// glVertexAttribPointer, which is illegal with no VAO bound in a core
+	// profile. The resulting GL_INVALID_OPERATION sits in the context until
+	// mpv's next glGetError drain reports it as
+	// "after creating texture: OpenGL error INVALID_OPERATION" — an error
+	// blamed on mpv that mpv did not cause. Only desktopGL (macOS) is on a
+	// core profile, hence only macOS logged it. Re-bind before Gio draws.
+	if desktopGL {
+		gl.BindVertexArray(p.defVAO)
 	}
 
 	p.ops.Reset()

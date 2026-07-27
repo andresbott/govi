@@ -136,12 +136,22 @@ path, cfg)` — empty path starts on the idle screen. See
   gamma-corrects through its own intermediate FBO. Fixed in commit 8d55a47 —
   don't regress it.
 - Frame order in `frame()`: clear → `RenderGL` (flipY=true, whole viewport) →
-  Gio `Frame` composites overlay → `SwapBuffers` → `ReportSwap()`.
+  re-bind `p.defVAO` (desktop GL only) → Gio `Frame` composites overlay →
+  `SwapBuffers` → `ReportSwap()`.
+- **A VAO must be bound before Gio draws** — mpv ends every render with
+  `glBindVertexArray(0)` (its `gl_vao_unbind`), and Gio shares this context, so
+  its per-frame state save/restore calls `glVertexAttribPointer`, which is
+  illegal with no VAO bound in a core profile. The `GL_INVALID_OPERATION` then
+  waits in the context until mpv's next `glGetError` drain reports it as
+  `after creating texture: OpenGL error INVALID_OPERATION` — an error attributed
+  to mpv that mpv never caused, and macOS-only because only `desktopGL` uses a
+  core profile. Binding the VAO once at init is **not** enough: mpv unbinds it
+  again on every frame. Don't move the re-bind out of `frame()`.
 - The loop renders **every iteration** (capped by `WaitEventsTimeout(0.05)`),
   not only on video frames, so overlays stay responsive while paused/idle.
 - macOS quirks: desktop GL 3.3 core (Gio expects ES elsewhere), default VAO
-  required for the forward-compatible profile, cursor positions manually
-  scaled by content scale (`input.go`).
+  required for the forward-compatible profile (see the invariant above), cursor
+  positions manually scaled by content scale (`input.go`).
 
 ## Input dispatch
 
