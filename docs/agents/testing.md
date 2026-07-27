@@ -40,7 +40,9 @@ to main and on PRs. `release.yml` runs on `v*.*.*` tags — see
 | Track-list parsing, zoom/aspect mapping | `app/player/tracks_test.go` | table-driven |
 | Size/bitrate/rate/duration formatters, path splitting | `app/player/format_test.go` | table-driven |
 | Info-overlay grouping: sections, per-kind track lists, `—`/`none` fallbacks | `app/player/mediainfo_test.go` | builds a `mediaInfo` literal and asserts on `infoSections` — no mpv handle, which is what keeps the grouping mpv-free |
-| Help-row generation, chord labels | `app/player/overlay_help_test.go` | table-driven |
+| Help-row generation (primary/secondary split), chord labels, the two-column split | `app/player/overlay_help_test.go` | table-driven, plus two measurement tests |
+| That the help panel's fixed cells fit their widest text and the split really is shorter | `app/player/overlay_help_test.go` (`TestHelpCellsFitTheirWidestText`, `TestHelpPanelIsShorterInTwoColumns`) | lays Gio out with a real font shaper but no display or GPU — text shaping is pure measurement. Zero `Constraints.Min` first, or a `Flex` fills its parent and every size comes back as the window |
+| That `o` reveals the control bar, hides it again on a second press, and fades rather than cuts | `app/player/controls_test.go` | a bare `Player{}`: `toggleProgress` only moves timestamps, so no mpv handle is needed |
 | Menu model building | `app/player/menu_test.go` | builds `Player{}` without a window — `buildMenu`/`trackSubmenu` tolerate `p.mpv == nil`; preserve that |
 | Placeholder load fallback | `app/player/idle_test.go` | temp files |
 | Observed position/duration cache, and that the seek and control-bar paths use it | `app/player/playback_test.go`, `playback_controls_test.go` | a `Player{}` with **no** mpv handle is the assertion: a synchronous property read would panic, which is how "never read mpv from the render thread" (player.md invariant 6) stays pinned |

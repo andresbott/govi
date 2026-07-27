@@ -6,6 +6,12 @@ gets out of the way, and leaves the keyboard in charge.
 > **Status:** under development. Things work, but interfaces, config and
 > shortcuts may still change between versions.
 
+## Screenshots
+
+![govi playing a video](zarf/MainScreen.jpg)
+
+![govi media info overlay](zarf/infoScreen.jpg)
+
 ## Usage
 
 ```sh

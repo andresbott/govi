@@ -147,6 +147,21 @@ func controlsVisible(now, lastInput time.Time, dragging bool) bool {
 	return now.Sub(lastInput) < controlsHideAfter+controlsFade
 }
 
+// controlsShowing reports whether the bar is up *and staying up* at now: inside
+// the hold window, rather than already on its way out. This is the predicate the
+// progress toggle decides on, not controlsVisible — a bar mid-fade-out is
+// leaving anyway, so the key should bring it back instead of dismissing it a
+// second time and appearing to do nothing.
+func controlsShowing(now, lastInput time.Time, dragging bool) bool {
+	if dragging {
+		return true
+	}
+	if lastInput.IsZero() {
+		return false
+	}
+	return now.Sub(lastInput) < controlsHideAfter
+}
+
 // controlsAlpha is the control bar's opacity in [0,1] at now: it ramps up over
 // controlsFade from revealedAt, holds at 1 until controlsHideAfter past
 // lastInput, then ramps back down. dragging pins it opaque so a slow scrub
@@ -194,6 +209,18 @@ func (p *Player) revealControls(now time.Time) {
 	a := controlsAlpha(now, p.lastInput, p.revealedAt, false)
 	p.revealedAt = now.Add(-time.Duration(a * float32(controlsFade)))
 	p.lastInput = now
+}
+
+// hideControls sends the control bar away, fading it out from wherever it is
+// rather than cutting it. It is the mirror of revealControls: instead of moving
+// revealedAt back by the alpha the bar already has, it moves lastInput back past
+// controlsHideAfter by the same amount, so the fade-out resumes at the current
+// alpha instead of jumping to opaque and starting over. Zeroing lastInput would
+// hide the bar too — but instantly, and a later reveal would then have to fade
+// in from nothing.
+func (p *Player) hideControls(now time.Time) {
+	a := controlsAlpha(now, p.lastInput, p.revealedAt, false)
+	p.lastInput = now.Add(-controlsHideAfter - time.Duration((1-a)*float32(controlsFade)))
 }
 
 // scrub seeks to the position the knob was dragged to. Called while the drag is
