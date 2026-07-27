@@ -27,12 +27,23 @@ brew install --cask andresbott/govi/govi
 `mpv` is pulled in as a dependency (it provides libmpv), and `brew upgrade` will track
 future releases. Apple Silicon only.
 
-This installs the `govi` **terminal command** — there is no Dock icon and no
-"Open with → govi" in Finder yet; run `govi <file>` from a terminal.
+This installs `govi.app` into `/Applications` — a Dock icon, a Launchpad entry, and
+"Open with → govi" in Finder — and symlinks the `govi` command onto your `PATH`, so
+both of these work:
+
+```bash
+govi ~/Movies/clip.mkv    # from a terminal
+open -a govi              # or launch it from Launchpad / Spotlight
+```
+
+Prefer not to use Homebrew? Download `govi_<version>_macos_arm64.dmg` from the
+[releases page](https://github.com/andresbott/govi/releases), open it and drag
+`govi.app` into Applications. Install `mpv` yourself in that case (`brew install mpv`) —
+govi needs libmpv at runtime.
 
 ### Debian / Ubuntu
 
-Download the `.deb` from the
+Download the `.deb` for your architecture from the
 [releases page](https://github.com/andresbott/govi/releases) and install it
 (this also pulls in libmpv):
 

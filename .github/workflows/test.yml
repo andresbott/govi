@@ -64,3 +64,21 @@ jobs:
           bin=$(find dist -name govi -type f | head -1)
           test -n "$bin" || { echo "no darwin binary was produced"; exit 1; }
           otool -L "$bin"
+
+      - name: Check the .app bundle and the disk image
+        # The post-build hook (zarf/macos) assembles govi.app and the .dmg. Only
+        # a macOS runner can check the parts that matter here: that plutil — the
+        # same parser Launch Services uses — accepts the generated Info.plist,
+        # and that hdiutil produced a mountable image. A malformed plist makes
+        # macOS ignore the bundle silently, with no error the user ever sees.
+        run: |
+          app=$(find dist -name 'govi.app' -type d | head -1)
+          test -n "$app" || { echo "no govi.app was produced"; exit 1; }
+          plutil -lint "$app/Contents/Info.plist"
+          test -s "$app/Contents/Resources/govi.icns" || { echo "the bundle has no icon"; exit 1; }
+          test -x "$app/Contents/MacOS/govi" || { echo "the bundled binary is not executable"; exit 1; }
+
+          dmg=$(find dist -name '*.dmg' | head -1)
+          test -n "$dmg" || { echo "no .dmg was produced"; exit 1; }
+          hdiutil imageinfo "$dmg" > /dev/null || { echo "the .dmg is not a readable image"; exit 1; }
+          echo "bundle and image OK: $app / $dmg"

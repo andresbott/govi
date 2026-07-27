@@ -17,6 +17,16 @@ linters:
           - nestif
           - dupl
           - gosec
+      # zarf/macos is the build-time macOS packager (not shipped, not exposed to
+      # untrusted input: its paths come from goreleaser and the repo). gosec's
+      # file rules are wrong for it by construction — a .app must contain
+      # world-readable 0644 files, 0755 directories and a 0755 executable, so
+      # G301/G306 would demand modes that make the bundle unusable, and
+      # G304/G703/G122 flag reading and copying the very paths the tool is asked
+      # to package.
+      - path: 'zarf/macos/'
+        linters:
+          - gosec
 
   settings:
     nolintlint:
