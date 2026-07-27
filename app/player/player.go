@@ -265,6 +265,15 @@ func Run(ctx context.Context, path string, cfg Config) error {
 
 	p.registerCallbacks()
 
+	// A cold start from Finder (double-clicking a video when govi is not running)
+	// passes no argument: the path came in as an open-document event during
+	// window creation and is waiting in the queue. Take it now rather than
+	// leaving it to the loop, so the file is loaded before the first frame
+	// instead of after a visible flash of the idle screen.
+	if path == "" {
+		path = takePendingOpen()
+	}
+
 	if path != "" {
 		if err := p.mpv.Command([]string{"loadfile", path}); err != nil {
 			return fmt.Errorf("loadfile %q: %w", path, err)
@@ -298,6 +307,22 @@ func setMinSize(win *glfw.Window, minW, minH int) {
 func (p *Player) initWindow() error {
 	if err := glfw.Init(); err != nil {
 		return fmt.Errorf("init glfw: %w", err)
+	}
+
+	// Installed here, between glfw.Init and glfw.CreateWindow, and the position
+	// is load-bearing on macOS:
+	//   - after Init, because it grafts onto the NSApplication delegate Init
+	//     creates (see openfiles_darwin.m);
+	//   - before CreateWindow, because that is what runs [NSApp run] to pump the
+	//     launch events (glfw's _glfwPlatformCreateWindow), and a cold start from
+	//     Finder — double-clicking a video when govi is not already running —
+	//     delivers its open-document event there. Installing it afterwards would
+	//     work for an already-running govi and silently drop the file in the case
+	//     users hit first.
+	// Not fatal: it only affects the bundled .app's Finder integration, and a
+	// player that runs without click-to-open beats one that refuses to start.
+	if err := installOpenFilesHandler(); err != nil {
+		p.log.Warn("finder open-document events will be ignored", "err", err)
 	}
 
 	// The backbuffer must stay linear: mpv already outputs sRGB-encoded
@@ -553,6 +578,15 @@ func (p *Player) loop(ctx context.Context) error {
 		// through, or seeked past its end). Done here rather than in the event
 		// pump so loadfile stays on the main loop.
 		p.handleEndOfFile()
+
+		// Open a file Finder handed over through the macOS open-document event
+		// (double-click, or a drop on the Dock icon). Handled here for the same
+		// reason as end-of-file: the event arrives on the Cocoa main thread, and
+		// loadfile belongs on the loop, not in a callback.
+		if path := takePendingOpen(); path != "" {
+			p.log.Info("opening file from the desktop", "path", path)
+			p.openFile(path)
+		}
 
 		// Write the volume out once it has stopped moving. Loop-driven for the
 		// same reason as the info cache: no timer needed, the loop already ticks

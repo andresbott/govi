@@ -60,6 +60,16 @@ path, cfg)` — empty path starts on the idle screen. See
    Ctrl-C do nothing. A goroutine calls `glfw.PostEmptyEvent()` on
    `ctx.Done()` so the wait doesn't delay exit; that is the one other
    thread-safe GLFW call allowed off the main loop.
+8. **macOS open-document events must not call mpv** (`openfiles_darwin.go`).
+   `-application:openFiles:` runs on the Cocoa main thread inside GLFW's event
+   pump, so it only puts the path in a buffered channel and posts an empty
+   event; the loop picks it up through `takePendingOpen` and calls `openFile`.
+   Same split as auto-advance, for the same reason (invariants 1/2), with one
+   extra: on a **cold start** the event fires during `glfw.CreateWindow`, before
+   mpv exists at all, so a direct call would dereference a nil handle. Hence
+   also the install point — `installOpenFilesHandler` sits between `glfw.Init`
+   and `glfw.CreateWindow` in `initWindow`; see the macOS bundle section of
+   [releasing.md](releasing.md) for why both bounds are load-bearing.
 
 ## Playlist and prefetch
 
