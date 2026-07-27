@@ -25,14 +25,11 @@ brew install --cask andresbott/govi/govi
 ```
 
 `mpv` is pulled in as a dependency (it provides libmpv), and `brew upgrade` will track
-future releases. Apple Silicon only.
-
-This installs the `govi` **terminal command** — there is no Dock icon and no
-"Open with → govi" in Finder yet; run `govi <file>` from a terminal.
+future releases.
 
 ### Debian / Ubuntu
 
-Download the `.deb` from the
+Download the `.deb` for your architecture from the
 [releases page](https://github.com/andresbott/govi/releases) and install it
 (this also pulls in libmpv):
 
