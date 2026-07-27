@@ -33,7 +33,25 @@ builds:
       - -X github.com/andresbott/govi/app/metainfo.Version={{.Version}}
       - -X github.com/andresbott/govi/app/metainfo.BuildTime={{.Date}}
       - -X github.com/andresbott/govi/app/metainfo.ShaVer={{.Commit}}
-    binary: govi
+    # a path, not a plain name: goreleaser writes the binary to
+    # dist/<id>_<target>/<binary>, so this lays out the Contents/MacOS/ level of
+    # the .app in place, and the archive below inherits the same relative path
+    # (see archive.Pipe, which uses the binary's name as its destination).
+    # `binary: govi` would give a bare CLI with no Dock icon and no Finder
+    # "Open with" entry.
+    binary: govi.app/Contents/MacOS/govi
+    hooks:
+      # fills in the rest of the bundle — Info.plist and the .icns — around the
+      # binary goreleaser just wrote, mirrors those two files to
+      # dist/macos-bundle/ for the archive below, and writes the .dmg (macOS
+      # only). goreleaser's own app_bundles/dmg sections are Pro-only, which is
+      # why this is a hook. See docs/agents/releasing.md.
+      #
+      # --out is dist, not the per-target directory: the .app is completed in
+      # place next to {{ .Path }} (the tool detects that it is already inside
+      # one), so --out only decides where the .dmg and the mirrored files land.
+      post:
+        - go run ./zarf/macos --binary "{{ .Path }}" --version "{{ .Version }}" --out dist --dmg-name "govi_{{ .Version }}_macos_{{ .Arch }}"
 
 archives:
   - formats: [tar.gz]
@@ -48,14 +66,35 @@ archives:
     files:
       - LICENSE
       - README.md
+      # the two bundle files the post-hook mirrored into dist/macos-bundle/. dst
+      # mirrors the layout `binary:` already gives the executable, so the archive
+      # holds one complete govi.app. The mirror exists because the real build
+      # directory carries an unpredictable microarch suffix
+      # (dist/govi-darwin_darwin_arm64_v8.0/).
+      - src: dist/macos-bundle/Contents/Info.plist
+        dst: govi.app/Contents/Info.plist
+      - src: dist/macos-bundle/Contents/Resources/govi.icns
+        dst: govi.app/Contents/Resources/govi.icns
 
 homebrew_casks:
   # publish a macOS cask into this same repo (Casks/govi.rb). the repo isn't
   # named homebrew-*, so users tap it by explicit URL — see README. the default
   # GITHUB_TOKEN can push here.
   - name: govi
+    # `app` cannot be expressed by any homebrew_casks field in the OSS build (it
+    # exists only for Pro's dmg pipeline), so it is injected as raw Ruby. This is
+    # what installs the bundle into /Applications and gives govi a Dock icon, a
+    # Launchpad entry and a Finder "Open with" entry. Homebrew's `app` stanza
+    # works from a .tar.gz just as well as from a .dmg.
+    custom_block: |
+      app "govi.app"
+    # the binary lives inside the bundle now, so PATH gets a symlink into it
+    # rather than a second copy. single-quoted: #{appdir} is Ruby interpolation
+    # evaluated by brew, and must survive goreleaser's YAML/template pass.
+    # Homebrew installs `app` before `binary` (ORDINARY_ARTIFACT_CLASSES), so the
+    # target exists by the time the symlink is made.
     binaries:
-      - govi
+      - '#{appdir}/govi.app/Contents/MacOS/govi'
     repository:
       owner: andresbott
       name: govi
@@ -73,18 +112,27 @@ homebrew_casks:
       # mpv is what supplies libmpv.2.dylib at runtime.
       - formula: mpv
     # the darwin binary isn't code-signed/notarized, so strip the Gatekeeper
-    # quarantine attribute on install to avoid a "govi is damaged" error.
+    # quarantine attribute on install to avoid a "govi is damaged" error. the
+    # target is the .app now, not a bare binary; -dr recurses, so the executable
+    # inside it is covered. this runs while the payload is still in staged_path,
+    # before the `app` stanza moves it to /Applications.
     hooks:
       post:
         install: |
           if OS.mac?
-            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/govi"]
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/govi.app"]
           end
 
 release:
   # explicit, though it is the default: this run must never touch the changelog
   # the linux run wrote.
   mode: keep-existing
+  extra_files:
+    # the .dmg the post-build hook produced. goreleaser knows nothing about it —
+    # it is uploaded as an opaque extra file, which is also why it cannot be the
+    # cask's download (no checksum is computed for it). It is the install path
+    # for people who don't use Homebrew: mount, drag govi.app to Applications.
+    - glob: dist/*.dmg
 
 checksum:
   # must differ from the linux run's checksums.txt — two runs upload to one

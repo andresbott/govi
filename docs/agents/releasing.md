@@ -96,6 +96,114 @@ suite is not green (headless mpv and Gio measurement tests need a
 display/font environment), and nobody has launched the binary on a Mac. Treat
 the first tagged release as the real test.
 
+## The macOS `.app` bundle (`zarf/macos`)
+
+goreleaser's `app_bundles` and `dmg` sections are **Pro-only**, so
+`zarf/macos` (a build-time Go command, never shipped) does that work from a
+`builds.hooks.post` in `.goreleaser.darwin.yaml`. It is Go rather than shell
+because then the fiddly parts — the `.icns` encoder, the plist writer, the DMG
+staging — are unit-tested on Linux instead of only exercised on a macOS runner.
+
+An `.app` is just a directory plus an XML manifest, which is why no Apple
+tooling is involved:
+
+```
+govi.app/Contents/Info.plist
+govi.app/Contents/MacOS/govi
+govi.app/Contents/Resources/govi.icns
+```
+
+How the pieces fit, and why each is the way it is:
+
+- **`binary: govi.app/Contents/MacOS/govi`** — goreleaser's `binary` accepts a
+  path, so the compiled binary lands at its final position inside the bundle,
+  and `archive.Pipe` reuses that same relative path as the archive
+  destination. This is what lets an OSS build ship a bundle at all. A plain
+  `binary: govi` would give a bare CLI: no Dock icon, no Finder association.
+- **`dist/macos-bundle/`** — the archive's `files:` entries need a static path
+  for the two generated files, but goreleaser's real output directory carries a
+  microarchitecture suffix (`dist/govi-darwin_darwin_arm64_v8.0/`) that a
+  config-time glob can't predict. The tool mirrors `Info.plist` and the
+  `.icns` there for the archive to pick up. Only those two — the binary is
+  already in the tree, and a second copy would double the archive.
+- **`custom_block: app "govi.app"`** — no `homebrew_casks` field emits an `app`
+  stanza in the OSS build (it exists only for Pro's DMG path), so it goes in as
+  raw Ruby. Homebrew's `app` stanza works from a `.tar.gz` exactly as from a
+  `.dmg`.
+- **`binaries: ['#{appdir}/govi.app/…']`** — single-quoted so the Ruby
+  interpolation survives goreleaser's template pass. Homebrew installs `app`
+  before `binary` (`ORDINARY_ARTIFACT_CLASSES` in `cask/dsl.rb`), so the symlink
+  target exists when it is made. One copy on disk, reachable as both an app and
+  a command.
+- **`CFBundleVersion` is dotted-numeric only** — `0.1.5-rc1` is not a legal
+  value; the suffix lives in `CFBundleShortVersionString` instead. Homebrew
+  compares bundle versions to decide whether an upgrade is a no-op.
+- **`com.andresbott.govi` must never change.** macOS keys Launch Services
+  registration, saved window frames and granted permissions on the bundle id;
+  changing it makes every upgrade look like a different application.
+- **The `.icns` is generated, not committed.** Sizes 512 and 1024 were rendered
+  from `zarf/govi.svg` and committed as PNGs alongside the existing ones,
+  because the Dock and Finder's icon view visibly upscale a 256px icon. Re-render
+  with the same inkscape loop as the other sizes.
+- **The `.dmg` cannot be the cask's download.** goreleaser computes checksums
+  only for artifacts it produced, and this one is external, so it is uploaded
+  through `release.extra_files` as an opaque asset — the install path for people
+  who don't use Homebrew. The cask keeps pointing at the tar.gz.
+- **The quarantine hook targets `govi.app`, not `govi`.** `-dr` recurses, so the
+  executable inside is covered. It runs while the payload is still in
+  `staged_path`, before the `app` stanza moves it.
+
+`hdiutil` is the only macOS-only step; off macOS the tool builds the bundle and
+skips the image, which is what makes `go run ./zarf/macos --binary … --version …`
+a useful local check.
+
+### Finder "Open with" needs more than the bundle
+
+`CFBundleDocumentTypes` makes govi *appear* in Finder's "Open with" menu, but
+that alone would open the idle screen with the file discarded: when Finder opens
+a document with a bundled app it does **not** pass the path in `argv` — it sends
+an `odoc` Apple Event, which AppKit routes to `-application:openFiles:` on the
+NSApplication delegate, and an unhandled open event is dropped silently.
+
+`app/player/openfiles_darwin.{go,m}` supplies that handler. Two details are
+load-bearing:
+
+- It **grafts the method onto the existing delegate's class** with
+  `class_addMethod` rather than installing its own delegate: GLFW creates one in
+  `_glfwPlatformInit` and depends on it for `applicationShouldTerminate` and the
+  launch hooks, so replacing it would break window closing.
+- **It is installed between `glfw.Init` and `glfw.CreateWindow`**, and both
+  bounds matter. After Init, because that is what creates the delegate to graft
+  onto. Before CreateWindow, because `_glfwPlatformCreateWindow` calls
+  `[NSApp run]` to pump the launch events (`cocoa_window.m`), which is where a
+  **cold start** delivers its open-document event — double-clicking a video when
+  govi isn't already running. Installing the handler after `initWindow` returns
+  works for a running instance and silently drops the file in the case users hit
+  first. `Run` then takes the queued path before the first frame, so the idle
+  screen doesn't flash.
+- The path crosses into the loop through a **buffered channel**, not a direct
+  `loadfile`. The event arrives on the Cocoa main thread inside GLFW's event
+  pump, and mpv commands belong on the loop (same reasoning as
+  `handleEndOfFile`; see player.md invariant 6). On a cold start the channel is
+  also what carries the path across the gap between window creation and mpv
+  being initialised at all.
+
+Two document-type entries are declared, not one: `public.movie` covers the
+formats with a system UTI, and the extension list covers those without one
+(`.mkv`, `.webm` and `.ogv` conform to no UTI and would otherwise never match).
+Both are `LSHandlerRank: Alternate` — govi offers itself without claiming to own
+every video on the disk. That extension list is a **third** copy of the format
+set, alongside `videoExts` in `app/player/playlist.go` and `MimeType=` in
+`zarf/govi.desktop`; the three serve different jobs, so add a new format to all
+three.
+
+**What is verified.** `plutil -lint` (the parser Launch Services itself uses)
+and `hdiutil imageinfo` run on every PR and every release, so a malformed
+manifest or unreadable image is a red build rather than a bundle macOS silently
+ignores. The `.icns` layout, plist contents and DMG staging are unit-tested on
+Linux. **Not** verified: that the Apple Event actually arrives — that needs
+someone to double-click a video on a Mac.
+
 ## Desktop integration (`.deb` only)
 
 The nfpm package installs `zarf/govi.desktop` to
@@ -121,9 +229,10 @@ appear in the launcher and in the file manager's "Open with" list.
 - The tar.gz archive deliberately ships the binary only — desktop files
   belong to a system-wide install path the tarball does not own.
 - The PNGs are rendered from the SVG:
-  `for s in 32 48 64 128 256; do inkscape -w $s -h $s zarf/govi.svg -o zarf/govi-$s.png; done`
+  `for s in 32 48 64 128 256 512 1024; do inkscape -w $s -h $s zarf/govi.svg -o zarf/govi-$s.png; done`
   (`rsvg-convert -w $s -h $s` works too). They are committed, so no build-time
-  dependency on either tool.
+  dependency on either tool. 512 and 1024 exist for the macOS `.icns` (see
+  above); the `.deb` installs the hicolor sizes only.
 - `zarf/govi.svg` is the flattened, Inkscape-metadata-free form of the artwork
   in `zarf/design/icon.svg` — the same play glyph as the idle-screen logo
   (`app/player/assets/logo.png`, exported from the same design file). Re-export
