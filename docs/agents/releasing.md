@@ -59,6 +59,11 @@ Four things the darwin config must keep:
 target, so on a mismatched runner goreleaser exits 0 having produced no binary
 at all. Both workflows omit it and assert a binary exists afterwards.
 
+**goreleaser is not preinstalled on the macOS runner images** (unlike ubuntu's),
+so both darwin jobs invoke it through `goreleaser/goreleaser-action@v6` rather
+than as a bare `run:` command — a plain `run: goreleaser ...` fails with
+`command not found` (exit 127).
+
 ## libmpv linkage
 
 A cgo binary hardcodes the path of every dylib it loads — macOS dyld does no
