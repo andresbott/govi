@@ -30,9 +30,16 @@ const (
 	// registration, window frames, granted permissions). Changing it makes
 	// macOS treat an upgrade as a different application.
 	bundleID = "com.andresbott.govi"
-	// minSystem is the oldest macOS the arm64 build targets; Apple Silicon
-	// shipped with 11.0, so nothing older can run this binary anyway.
-	minSystem = "11.0"
+	// minSystem is the oldest macOS the arm64 build targets. 12.0 because that is
+	// Go's floor (go1.26 is the last release to run on macOS 12 at all), and
+	// Apple Silicon shipped with 11.0, so nothing this excludes could have run
+	// the binary regardless.
+	//
+	// It must equal MACOSX_DEPLOYMENT_TARGET in .goreleaser.darwin.yaml: this
+	// value goes into Info.plist, the env var goes into the binary's
+	// LC_BUILD_VERSION, and Launch Services enforces the latter. Verify below
+	// fails the build when they drift.
+	minSystem = "12.0"
 	// bundleStageDir is where, relative to --out, the generated Info.plist and
 	// .icns are mirrored for the archive step to pick up. See exportBundleFiles.
 	bundleStageDir = "macos-bundle"
@@ -127,6 +134,14 @@ func run() error {
 	// that installs cleanly and then refuses to open with a message naming
 	// nothing useful.
 	if err := bundle.Verify(appDir, appName); err != nil {
+		return err
+	}
+	// The deployment-target check is separate because it is about the binary
+	// goreleaser produced, not about the tree this tool wrote: on a runner whose
+	// macOS is newer than minSystem, an unset MACOSX_DEPLOYMENT_TARGET stamps the
+	// runner's version into the Mach-O and Finder then refuses the bundle on
+	// every older Mac. Off macOS the payload is not a Mach-O and this is a no-op.
+	if err := bundle.VerifyMinOS(appDir, appName, minSystem); err != nil {
 		return err
 	}
 	fmt.Println("macpack: built", appDir)

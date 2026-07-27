@@ -36,8 +36,11 @@ Silicon, free for public repos) then appends the darwin artifacts. The
 before the second run touches it, which is also why the darwin config sets
 `release.mode: keep-existing` and `changelog.disable: true`.
 
-Four things the darwin config must keep:
+Five things the darwin config must keep:
 
+- **`MACOSX_DEPLOYMENT_TARGET=12.0`** — see
+  [The deployment target](#the-deployment-target) below. Without it the release
+  is unopenable from Finder on any Mac older than the build runner.
 - **`tags: [pkgconfig]`** — go-mpv's default cgo path is a bare `-lmpv`, and
   clang doesn't search `/opt/homebrew/{include,lib}`. The tag switches it to
   `pkg-config: mpv`; Homebrew's mpv formula ships `lib/pkgconfig/mpv.pc`
@@ -63,6 +66,40 @@ at all. Both workflows omit it and assert a binary exists afterwards.
 so both darwin jobs invoke it through `goreleaser/goreleaser-action@v6` rather
 than as a bare `run:` command — a plain `run: goreleaser ...` fails with
 `command not found` (exit 127).
+
+## The deployment target
+
+`.goreleaser.darwin.yaml` sets **`MACOSX_DEPLOYMENT_TARGET=12.0`** in the build
+env, and it must stay equal to `minSystem` in `zarf/macos/main.go`. This is not
+cosmetic: **v0.1.5 shipped without it and could not be opened from Finder at
+all**, on any Mac older than the runner's.
+
+Two separate places state a minimum OS, and only one of them is enforced:
+
+- `LSMinimumSystemVersion` in `Info.plist` — advisory metadata.
+- `LC_BUILD_VERSION.minos` in the Mach-O — what **Launch Services** checks
+  before it will open the bundle.
+
+cgo forces external linking, so *clang* writes that load command, not Go. With
+no deployment target set clang stamps in **the build machine's own OS version**.
+`macos-latest` is macOS 26, so v0.1.5's binary declared `minos 26.0` while its
+plist said `11.0`; Finder reported "you need to upgrade to macOS 26.0" on a
+15.6 machine. Running the same binary straight from a shell worked, because dyld
+is laxer about the field than Launch Services — which is exactly why this looked
+like a bundle problem rather than a compiler-flag one.
+
+`bundle.VerifyMinOS` (`zarf/macos/bundle/minos.go`), called from the post-build
+hook, reads the load command back and fails the build when it disagrees with
+`LSMinimumSystemVersion` in either direction. Too high means the env var went
+missing again; too low means the plist was bumped alone. Off macOS the payload is
+not a Mach-O and the check is a no-op, so the Linux rehearsal still works. The
+PR job also prints `vtool -show-build-version`, so the real number is in every
+log.
+
+**12.0, not 11.0**, because that is the Go toolchain's own floor — go1.26 is the
+last release that runs on macOS 12 at all, and go1.27 will require 13. Apple
+Silicon shipped with 11.0, so nothing this excludes could have run the arm64
+binary anyway. When Go raises its floor again, both values move together.
 
 ## libmpv linkage
 
