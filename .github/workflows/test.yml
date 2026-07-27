@@ -24,3 +24,36 @@ jobs:
 
       - name: ensure test coverage
         run: make coverage
+
+  # compile + cgo-link check only. This is what catches a broken darwin build
+  # before a tag is pushed, since the release path can't be rehearsed locally.
+  # It deliberately does NOT run `make test`: the headless-mpv and Gio
+  # measurement tests need a display/font environment on macOS, which is
+  # separate work (docs/agents/testing.md). The linux `test` job above remains
+  # the functional gate.
+  build-darwin:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: 'go.mod'
+          cache: true
+
+      - name: Install cgo build dependencies (libmpv via mpv, pkg-config)
+        run: brew install mpv pkgconf
+
+      - name: build darwin snapshot
+        # exercises the full compile, cgo-link and libmpv linkage assertion.
+        # NOT --single-target: that matches the *host* target, so it would exit
+        # 0 having built nothing if the runner arch ever mismatched.
+        run: goreleaser build --snapshot --clean --config .goreleaser.darwin.yaml
+
+      - name: Show the resulting libmpv linkage
+        # also guards against a vacuous build: no binary means failure.
+        run: |
+          bin=$(find dist -name govi -type f | head -1)
+          test -n "$bin" || { echo "no darwin binary was produced"; exit 1; }
+          otool -L "$bin"
