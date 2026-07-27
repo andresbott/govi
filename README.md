@@ -12,6 +12,39 @@ gets out of the way, and leaves the keyboard in charge.
 
 ![govi media info overlay](zarf/infoScreen.jpg)
 
+## Install
+
+### macOS (Homebrew)
+
+A macOS cask is published into this repository on every tagged release. Because the repo
+isn't named `homebrew-*`, tap it with an explicit URL, then install:
+
+```bash
+brew tap andresbott/govi https://github.com/andresbott/govi
+brew install --cask andresbott/govi/govi
+```
+
+`mpv` is pulled in as a dependency (it provides libmpv), and `brew upgrade` will track
+future releases. Apple Silicon only.
+
+This installs the `govi` **terminal command** — there is no Dock icon and no
+"Open with → govi" in Finder yet; run `govi <file>` from a terminal.
+
+### Debian / Ubuntu
+
+Download the `.deb` from the
+[releases page](https://github.com/andresbott/govi/releases) and install it
+(this also pulls in libmpv):
+
+```bash
+sudo apt install ./govi_*_amd64.deb
+```
+
+### Other
+
+Grab a prebuilt `tar.gz` archive from the
+[releases page](https://github.com/andresbott/govi/releases).
+
 ## Usage
 
 ```sh

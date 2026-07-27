@@ -14,14 +14,72 @@ annotated tag, and pushes it. The push triggers
 `.github/workflows/release.yml` (`v*.*.*` and `v*.*.*-*` prerelease tags),
 which runs goreleaser.
 
-## Build constraints (`.goreleaser.yaml`)
+## Build constraints
 
-- **Linux amd64 only, CGO_ENABLED=1** — govi links libmpv via cgo, so no
-  cross-compiled darwin/windows targets and never `CGO_ENABLED=0`. Adding a
-  platform means adding a native build runner, not a goarch line.
+- **Two independent goreleaser runs, one release.** govi links libmpv via cgo, so
+  a darwin binary must be compiled on macOS, and goreleaser OSS has no
+  `--split` / `continue --merge` (Pro-only). So `.goreleaser.yaml` builds
+  **linux amd64 only, CGO_ENABLED=1**, and `.goreleaser.darwin.yaml` builds
+  **darwin arm64** on a `macos-latest` runner. Adding a platform means adding a
+  native build runner, not a goarch line. Validate both with
+  `make release-check`.
 - Version info is linker-stamped into `app/metainfo` (`Version`, `BuildTime`,
   `ShaVer`); dev builds show `dev-build` and stamp `BuildTime` at init.
 - Artifacts: tar.gz archive (uname-compatible naming) plus nfpm packages.
+
+## The darwin run (`.goreleaser.darwin.yaml`)
+
+`.github/workflows/release.yml` has two jobs. `release` (ubuntu) creates the
+GitHub release and its changelog; `release-darwin` (`macos-latest`, Apple
+Silicon, free for public repos) then appends the darwin artifacts. The
+`needs: release` edge is load-bearing — the release and its notes must exist
+before the second run touches it, which is also why the darwin config sets
+`release.mode: keep-existing` and `changelog.disable: true`.
+
+Four things the darwin config must keep:
+
+- **`tags: [pkgconfig]`** — go-mpv's default cgo path is a bare `-lmpv`, and
+  clang doesn't search `/opt/homebrew/{include,lib}`. The tag switches it to
+  `pkg-config: mpv`; Homebrew's mpv formula ships `lib/pkgconfig/mpv.pc`
+  (built with `-Dlibmpv=true`). The workflow installs `pkgconf` explicitly
+  because of this.
+- **`checksums_darwin.txt`** — two runs uploading to one release must not
+  produce identically named assets, and the archive template already
+  disambiguates by OS but the checksum file does not.
+- **arm64 only** — Intel needs a `macos-*-intel` runner, billed at 12x the
+  arm64 rate per release. The generated cask has an `on_arm` block only, so
+  `brew install --cask` on an Intel Mac fails with an unsupported-architecture
+  error rather than installing an unrunnable binary.
+- **The quarantine hook** — the binary is unsigned and un-notarized, so
+  without `xattr -dr com.apple.quarantine` Gatekeeper reports "govi is
+  damaged and can't be opened". Removing this hack needs a paid Apple
+  Developer account and a notarization step.
+
+**Never add `--single-target` to the darwin build.** It matches the *host*
+target, so on a mismatched runner goreleaser exits 0 having produced no binary
+at all. Both workflows omit it and assert a binary exists afterwards.
+
+`zarf/darwin-check-libmpv.sh` runs as a build post-hook and **asserts** that
+libmpv is loaded via Homebrew's opt path
+(`/opt/homebrew/opt/mpv/lib/libmpv.2.dylib`), failing the build otherwise. It
+does not rewrite anything: Homebrew's `fix_dynamic_linkage` already sets
+install names from `opt_record` rather than the versioned Cellar path, so a
+`brew upgrade mpv` doesn't break govi. Using `install_name_tool` here would
+invalidate the ad-hoc code signature Apple Silicon requires. The script's
+logic is tested on Linux via a stubbed `otool`
+(`zarf/darwin_check_libmpv_test.go`, run by `make test`).
+
+Two failure modes are accepted because no build-time fix addresses them: a
+libmpv soname bump (needs a rebuild and a new tag) and a non-standard
+`HOMEBREW_PREFIX` (`/opt/homebrew` is the only supported prefix on Apple
+Silicon).
+
+**What is and isn't verified.** CI proves govi *compiles and cgo-links* on
+macOS arm64 (`build-darwin` in `test.yml` runs on every PR) and that the
+linkage is opt-path based. It does **not** prove govi runs: the macOS test
+suite is not green (headless mpv and Gio measurement tests need a
+display/font environment), and nobody has launched the binary on a Mac. Treat
+the first tagged release as the real test.
 
 ## Desktop integration (`.deb` only)
 
