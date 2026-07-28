@@ -1,7 +1,11 @@
 package player
 
 import (
+	"io"
+	"log/slog"
 	"math"
+	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -101,5 +105,47 @@ func TestSplitPath(t *testing.T) {
 		if dir != tt.wantDir || name != tt.wantName {
 			t.Errorf("splitPath(%q) = (%q, %q), want (%q, %q)", tt.in, dir, name, tt.wantDir, tt.wantName)
 		}
+	}
+}
+
+// The empty string is the case worth pinning: it means "no file, start idle",
+// and filepath.Abs("") returns the working directory, which mpv would then try
+// to play as a directory. Passing "" through unchanged is what keeps Run on its
+// idle-screen branch.
+func TestAbsMediaPathLeavesEmptyAndURLsAlone(t *testing.T) {
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	for _, in := range []string{
+		"",
+		"https://example.com/stream.m3u8",
+		"rtmp://host/live",
+	} {
+		if got := absMediaPath(in, log); got != in {
+			t.Errorf("absMediaPath(%q) = %q, want it unchanged", in, got)
+		}
+	}
+}
+
+// A relative path must come back anchored to the directory govi was started in,
+// because GLFW may chdir during initialisation on a bundled macOS build and mpv
+// resolves relative paths against the cwd it is called with.
+func TestAbsMediaPathAnchorsRelativePaths(t *testing.T) {
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd: %v", err)
+	}
+
+	got := absMediaPath("clip.mp4", log)
+	if want := filepath.Join(cwd, "clip.mp4"); got != want {
+		t.Errorf("absMediaPath(%q) = %q, want %q", "clip.mp4", got, want)
+	}
+	if !filepath.IsAbs(got) {
+		t.Errorf("absMediaPath(%q) = %q, want an absolute path", "clip.mp4", got)
+	}
+
+	// An already-absolute path is returned as it was, not rewritten.
+	abs := filepath.Join(cwd, "sub", "clip.mkv")
+	if got := absMediaPath(abs, log); got != abs {
+		t.Errorf("absMediaPath(%q) = %q, want it unchanged", abs, got)
 	}
 }

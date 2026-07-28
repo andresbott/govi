@@ -202,7 +202,7 @@ a document with a bundled app it does **not** pass the path in `argv` — it sen
 an `odoc` Apple Event, which AppKit routes to `-application:openFiles:` on the
 NSApplication delegate, and an unhandled open event is dropped silently.
 
-`app/player/openfiles_darwin.{go,m}` supplies that handler. Two details are
+`app/player/openfiles_darwin.{go,m}` supplies that handler. Three details are
 load-bearing:
 
 - It **grafts the method onto the existing delegate's class** with
@@ -211,19 +211,56 @@ load-bearing:
   launch hooks, so replacing it would break window closing.
 - **It is installed between `glfw.Init` and `glfw.CreateWindow`**, and both
   bounds matter. After Init, because that is what creates the delegate to graft
-  onto. Before CreateWindow, because `_glfwPlatformCreateWindow` calls
-  `[NSApp run]` to pump the launch events (`cocoa_window.m`), which is where a
-  **cold start** delivers its open-document event — double-clicking a video when
-  govi isn't already running. Installing the handler after `initWindow` returns
-  works for a running instance and silently drops the file in the case users hit
-  first. `Run` then takes the queued path before the first frame, so the idle
-  screen doesn't flash.
+  onto. Before CreateWindow, because the same call finishes AppKit's launch
+  sequence (next section), and that is what delivers a **cold start's**
+  open-document event — double-clicking a video when govi isn't already running.
+  Grafting after the launch sequence would work for a running instance and
+  silently drop the file in the case users hit first. `Run` then takes the queued
+  path before the first frame, so the idle screen doesn't flash.
 - The path crosses into the loop through a **buffered channel**, not a direct
   `loadfile`. The event arrives on the Cocoa main thread inside GLFW's event
   pump, and mpv commands belong on the loop (same reasoning as
   `handleEndOfFile`; see player.md invariant 6). On a cold start the channel is
   also what carries the path across the gap between window creation and mpv
-  being initialised at all.
+  being initialised at all. The wake-up posted alongside it is
+  `goviWakeEventLoop`, **not** `glfw.PostEmptyEvent`: GLFW's version starts with
+  `if (!finishedLaunching) [NSApp run];`, so on a cold start it would open a
+  nested run loop from inside a delegate callback.
+
+### govi must finish AppKit's launch sequence itself
+
+GLFW expects `[NSApp run]` to pump the launch: `_glfwPlatformCreateWindow` calls
+it and relies on `-applicationDidFinishLaunching:` to call `[NSApp stop:]` and
+unwind it (`cocoa_window.m`, `cocoa_init.m`). That works for a bare binary. It
+does **not** work once the executable lives inside `govi.app`, which is what
+v0.1.5 changed — the cask symlinks `Contents/MacOS/govi` onto `PATH`, so even a
+shell invocation is now a bundled app. The launch notification then only arrives
+when the app is *activated*, which produced two bugs:
+
+- `govi <video>` from a shell hung forever with no window and no log output —
+  `CreateWindow` never returned. There wasn't even a Dock icon to click, because
+  `NSApplicationActivationPolicyRegular` is set inside that same callback.
+- Launched from Finder or `open`, the window appeared only after the user
+  clicked the Dock icon.
+
+`goviInstallOpenFilesHandler` therefore calls `[NSApp finishLaunching]` (once,
+guarded) plus `activateIgnoringOtherApps:` before any window exists. That posts
+the launch notifications synchronously, so GLFW's delegate sets its
+`finishedLaunching` flag and `CreateWindow` skips `[NSApp run]` entirely. This is
+why a failure from `installOpenFilesHandler` is **fatal on macOS** rather than a
+warning: without a finished launch sequence `CreateWindow` hangs instead of
+returning an error.
+
+### The bundle's working directory
+
+GLFW's `GLFW_COCOA_CHDIR_RESOURCES` init hint defaults to **on**, and
+`_glfwPlatformInit` acts on it by `chdir`ing into `Contents/Resources`. Harmless
+for a bare binary; for the bundled build it would move the process out of the
+directory the user typed the command in and break every relative path handed to
+mpv or `scanPlaylist`. `initWindow` turns it off (`glfw.InitHint`, a no-op off
+macOS), and `Run` additionally resolves the media path through `absMediaPath`
+before `initWindow` runs, so the argument is anchored regardless of what else
+touches the cwd.
 
 Two document-type entries are declared, not one: `public.movie` covers the
 formats with a system UTI, and the extension list covers those without one

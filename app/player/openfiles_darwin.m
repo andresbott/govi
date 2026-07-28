@@ -44,7 +44,46 @@ static void goviOpenFilesImp(id self, SEL _cmd, NSApplication *app, NSArray<NSSt
 	[app replyToOpenOrPrint:NSApplicationDelegateReplySuccess];
 }
 
-// goviInstallOpenFilesHandler grafts the handler onto the live delegate's class.
+// goviFinishLaunching completes AppKit's launch sequence before any window is
+// created.
+//
+// GLFW does not do this itself: _glfwPlatformCreateWindow calls [NSApp run] and
+// relies on -applicationDidFinishLaunching: to call [NSApp stop:] and unwind it
+// (cocoa_window.m, cocoa_init.m). That notification is only delivered once the
+// process is a *launched, active* application, which holds for a bare binary but
+// not for govi since v0.1.5, where the executable lives inside govi.app:
+//
+//   - run from a shell (the Homebrew symlink points into Contents/MacOS), the app
+//     never activates, the notification never arrives, and glfw.CreateWindow
+//     blocks forever — no window, and not even a Dock icon to click, because the
+//     regular activation policy is also set inside that same callback;
+//   - launched through Finder or `open`, the notification waits for the user to
+//     activate the app, so the window only appeared after a click on the Dock
+//     icon.
+//
+// -finishLaunching posts the two launch notifications synchronously, which sets
+// GLFW's finishedLaunching flag (its delegate observes them) and applies the
+// activation policy. CreateWindow then skips [NSApp run] altogether. Calling it
+// twice is what must be avoided, hence the guard: AppKit's own -run would call
+// it again, and a second launch sequence re-posts open-document events.
+//
+// Called with the delegate already in place, so the open-files handler below is
+// grafted on first and a cold start's odoc event still lands in the queue.
+static void goviFinishLaunching(void) {
+	static BOOL done = NO;
+	if (done) {
+		return;
+	}
+	done = YES;
+	[NSApp finishLaunching];
+	// finishLaunching alone leaves an unbundled or shell-launched process without
+	// focus: it is ordered in but not frontmost, so the window would open behind
+	// whatever terminal started it. Activating matches what a double-click gives.
+	[NSApp activateIgnoringOtherApps:YES];
+}
+
+// goviInstallOpenFilesHandler grafts the handler onto the live delegate's class
+// and finishes AppKit's launch sequence.
 //
 // Returns 1 when the handler is in place, 0 when there is no delegate to attach
 // it to (which means GLFW has not initialised yet — the Go side treats that as a
@@ -71,6 +110,33 @@ int goviInstallOpenFilesHandler(void) {
 		if (!class_addMethod(cls, sel, (IMP)goviOpenFilesImp, types)) {
 			class_replaceMethod(cls, sel, (IMP)goviOpenFilesImp, types);
 		}
+
+		// Only after the graft: -finishLaunching is what delivers a cold start's
+		// open-document event, and the handler has to be installed to catch it.
+		goviFinishLaunching();
 		return 1;
+	}
+}
+
+// goviWakeEventLoop posts a no-op event so a thread parked in
+// nextEventMatchingMask returns now instead of waiting out its timeout.
+//
+// Deliberately not glfw.PostEmptyEvent: that one begins with
+// `if (!finishedLaunching) [NSApp run];` (cocoa_window.m), so calling it from
+// -application:openFiles: during a cold start would start a *nested* run loop
+// from inside a delegate callback, with the outer one still on the stack. This
+// does only the postEvent half.
+void goviWakeEventLoop(void) {
+	@autoreleasepool {
+		NSEvent *event = [NSEvent otherEventWithType:NSEventTypeApplicationDefined
+		                                   location:NSMakePoint(0, 0)
+		                              modifierFlags:0
+		                                  timestamp:0
+		                               windowNumber:0
+		                                    context:nil
+		                                    subtype:0
+		                                      data1:0
+		                                      data2:0];
+		[NSApp postEvent:event atStart:YES];
 	}
 }

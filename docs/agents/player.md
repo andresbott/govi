@@ -62,14 +62,19 @@ path, cfg)` — empty path starts on the idle screen. See
    thread-safe GLFW call allowed off the main loop.
 8. **macOS open-document events must not call mpv** (`openfiles_darwin.go`).
    `-application:openFiles:` runs on the Cocoa main thread inside GLFW's event
-   pump, so it only puts the path in a buffered channel and posts an empty
+   pump, so it only puts the path in a buffered channel and posts a wake-up
    event; the loop picks it up through `takePendingOpen` and calls `openFile`.
    Same split as auto-advance, for the same reason (invariants 1/2), with one
-   extra: on a **cold start** the event fires during `glfw.CreateWindow`, before
-   mpv exists at all, so a direct call would dereference a nil handle. Hence
-   also the install point — `installOpenFilesHandler` sits between `glfw.Init`
-   and `glfw.CreateWindow` in `initWindow`; see the macOS bundle section of
-   [releasing.md](releasing.md) for why both bounds are load-bearing.
+   extra: on a **cold start** the event fires while `initWindow` finishes
+   AppKit's launch sequence, before mpv exists at all, so a direct call would
+   dereference a nil handle. The wake-up is `goviWakeEventLoop`, not
+   `glfw.PostEmptyEvent`, which would open a nested `[NSApp run]` at that point.
+9. **`installOpenFilesHandler` also finishes AppKit's launch, and its failure is
+   fatal.** It sits between `glfw.Init` and `glfw.CreateWindow` in `initWindow`,
+   and both bounds are load-bearing. Without it a bundled govi never opens a
+   window from a shell at all, because `glfw.CreateWindow` blocks in
+   `[NSApp run]` waiting for a launch notification that only arrives on
+   activation. See the two macOS sections of [releasing.md](releasing.md).
 
 ## Playlist and prefetch
 
