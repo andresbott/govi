@@ -251,6 +251,18 @@ why a failure from `installOpenFilesHandler` is **fatal on macOS** rather than a
 warning: without a finished launch sequence `CreateWindow` hangs instead of
 returning an error.
 
+One trap comes with it: **`-finishLaunching` turns a positional command-line
+argument into an open-document event.** So `govi <video>` fires the open-files
+handler with a path `app/cmd` already passed to `Run` — and with AppKit's raw
+copy, still relative to the working directory. Left alone, the loop's
+`takePendingOpen` replays the file over the absolute path `Run` resolved, and mpv
+reports "No such file or directory" for a file it had just opened. `goviLaunching`
+plus `goviHasFileArgument` suppress exactly those echo events, scoped to the
+`-finishLaunching` call: an open event after it is a real user action (double-click
+on a running govi, drop on the Dock icon) and must still play. A cold-start
+double-click also arrives inside that window, but a Finder launch has no
+positional argument — the path comes as an Apple Event — so nothing is dropped.
+
 ### The bundle's working directory
 
 GLFW's `GLFW_COCOA_CHDIR_RESOURCES` init hint defaults to **on**, and
@@ -260,7 +272,10 @@ directory the user typed the command in and break every relative path handed to
 mpv or `scanPlaylist`. `initWindow` turns it off (`glfw.InitHint`, a no-op off
 macOS), and `Run` additionally resolves the media path through `absMediaPath`
 before `initWindow` runs, so the argument is anchored regardless of what else
-touches the cwd.
+touches the cwd. `absMediaPath` only substitutes the absolute form when it
+**exists**: absolutising a name that is not in the working directory would make
+mpv's error name a path the user never typed, and would break the prefixes mpv
+resolves but `filepath` does not (`dvd://1` and friends).
 
 Two document-type entries are declared, not one: `public.movie` covers the
 formats with a system UTI, and the extension list covers those without one

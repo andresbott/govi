@@ -125,18 +125,25 @@ func TestAbsMediaPathLeavesEmptyAndURLsAlone(t *testing.T) {
 	}
 }
 
-// A relative path must come back anchored to the directory govi was started in,
-// because GLFW may chdir during initialisation on a bundled macOS build and mpv
-// resolves relative paths against the cwd it is called with.
+// A relative path that exists must come back anchored to the directory govi was
+// started in, because GLFW may chdir during initialisation on a bundled macOS
+// build and mpv resolves relative paths against the cwd it is called with.
 func TestAbsMediaPathAnchorsRelativePaths(t *testing.T) {
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	cwd, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("Getwd: %v", err)
+	dir := t.TempDir()
+	t.Chdir(dir)
+	if err := os.WriteFile("clip.mp4", []byte("x"), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
 	}
 
 	got := absMediaPath("clip.mp4", log)
-	if want := filepath.Join(cwd, "clip.mp4"); got != want {
+	// t.TempDir can hand back a symlinked path (/var -> /private/var on macOS),
+	// so compare against Abs of the same name rather than a hand-built join.
+	want, err := filepath.Abs("clip.mp4")
+	if err != nil {
+		t.Fatalf("Abs: %v", err)
+	}
+	if got != want {
 		t.Errorf("absMediaPath(%q) = %q, want %q", "clip.mp4", got, want)
 	}
 	if !filepath.IsAbs(got) {
@@ -144,8 +151,21 @@ func TestAbsMediaPathAnchorsRelativePaths(t *testing.T) {
 	}
 
 	// An already-absolute path is returned as it was, not rewritten.
-	abs := filepath.Join(cwd, "sub", "clip.mkv")
-	if got := absMediaPath(abs, log); got != abs {
-		t.Errorf("absMediaPath(%q) = %q, want it unchanged", abs, got)
+	if got := absMediaPath(want, log); got != want {
+		t.Errorf("absMediaPath(%q) = %q, want it unchanged", want, got)
+	}
+}
+
+// A name that is not in the working directory is left alone: inventing an
+// absolute path for it would make mpv's "No such file" name a path the user
+// never typed, and would break anything mpv resolves but filepath does not.
+func TestAbsMediaPathLeavesMissingFilesAlone(t *testing.T) {
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	t.Chdir(t.TempDir())
+
+	for _, in := range []string{"absent.mp4", "no/such/dir/clip.mkv", "dvd://1"} {
+		if got := absMediaPath(in, log); got != in {
+			t.Errorf("absMediaPath(%q) = %q, want it unchanged", in, got)
+		}
 	}
 }

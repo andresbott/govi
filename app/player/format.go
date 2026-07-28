@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
+	"os"
 	"path/filepath"
 	"strings"
 )
@@ -83,6 +84,13 @@ func splitPath(path string) (dir, name string) {
 // filepath would mangle its scheme. And a path Abs cannot resolve (the cwd was
 // deleted under us) is handed to mpv as-is rather than dropped: mpv's own error
 // message for it is better than silently opening the idle screen.
+//
+// The resolved path is only used when it actually exists. Absolutising a name
+// that is not in the working directory would otherwise replace the string the
+// user typed with an invented one, and mpv's "No such file" would then name a
+// path they never asked for — confusing on its own, and actively misleading for
+// anything mpv resolves itself but Go's filepath does not (a protocol prefix
+// like "dvd://", or a path mpv expands relative to its own config).
 func absMediaPath(path string, log *slog.Logger) string {
 	if path == "" || isURL(path) {
 		return path
@@ -90,6 +98,9 @@ func absMediaPath(path string, log *slog.Logger) string {
 	abs, err := filepath.Abs(path)
 	if err != nil {
 		log.Warn("could not resolve path, passing it to mpv unchanged", "path", path, "err", err)
+		return path
+	}
+	if _, err := os.Stat(abs); err != nil {
 		return path
 	}
 	return abs
