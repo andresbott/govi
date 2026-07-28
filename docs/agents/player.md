@@ -69,6 +69,11 @@ path, cfg)` — empty path starts on the idle screen. See
    AppKit's launch sequence, before mpv exists at all, so a direct call would
    dereference a nil handle. The wake-up is `goviWakeEventLoop`, not
    `glfw.PostEmptyEvent`, which would open a nested `[NSApp run]` at that point.
+   Not every open event during that launch window is real, either: AppKit turns a
+   positional command-line argument into one, which would replay the file
+   `app/cmd` already passed to `Run`. `goviLaunching` / `goviHasFileArgument`
+   drop exactly those — see "govi must finish AppKit's launch sequence itself" in
+   [releasing.md](releasing.md).
 9. **`installOpenFilesHandler` also finishes AppKit's launch, and its failure is
    fatal.** It sits between `glfw.Init` and `glfw.CreateWindow` in `initWindow`,
    and both bounds are load-bearing. Without it a bundled govi never opens a
