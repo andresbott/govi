@@ -137,6 +137,14 @@ type Player struct {
 	lastInput  time.Time
 	revealedAt time.Time
 
+	// mouse-pointer auto-hide (see cursor.go): when the mouse last moved, and
+	// whether the pointer is currently hidden. Only fullscreen hides it, and only
+	// once the mouse has rested for cursorHideAfter. Kept apart from lastInput
+	// because that one also moves on clicks and on the seek shortcuts, neither of
+	// which should bring a hidden pointer back.
+	lastPointerMove time.Time
+	cursorHidden    bool
+
 	// volume persistence (see volume.go): saveAudioState writes the level and
 	// mute flag to disk, injected by app/cmd so the player stays YAML-free.
 	// volumeSavePending is when the level last changed; the loop writes it out
@@ -613,6 +621,12 @@ func (p *Player) loop(ctx context.Context) error {
 		// same reason as the info cache: no timer needed, the loop already ticks
 		// every idleFrame.
 		p.saveVolumeIfDue(time.Now())
+
+		// Hide the mouse pointer once it has rested in fullscreen, and bring it
+		// back on leaving fullscreen. Loop-driven for the same reason, and here
+		// rather than in a callback because nothing moves when the mouse is the
+		// thing that stopped (see cursor.go).
+		p.syncCursor(time.Now(), p.fullscreen())
 
 		// Acknowledge mpv's update flag when a new video frame is ready.
 		if p.needsRender.CompareAndSwap(true, false) {
