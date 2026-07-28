@@ -26,7 +26,9 @@ func (p *Player) registerCallbacks() {
 			scale, _ = w.GetContentScale()
 		}
 		lastPos = f32.Point{X: float32(xpos) * scale, Y: float32(ypos) * scale}
-		p.revealControls(time.Now()) // brings the auto-hiding control bar up
+		// Brings the auto-hiding control bar up, and the pointer back if it had
+		// been hidden by a fullscreen idle (see cursor.go).
+		p.handlePointerMove(time.Now())
 		p.router.Queue(pointer.Event{
 			Kind:     pointer.Move,
 			Position: lastPos,

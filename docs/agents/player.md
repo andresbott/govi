@@ -416,6 +416,40 @@ toggle pause. Points that will bite if changed:
 - Layer order in `layoutUI`: control bar first, then the flash, then the
   overlays — so a panel or a flash wins any pixel it shares with the bar.
 
+## Mouse-pointer auto-hide (`cursor.go`)
+
+The pointer hides itself in fullscreen after `cursorHideAfter` (3 s) of a still
+mouse, and comes back on the next move. Same shape as the control bar's
+auto-hide, with four deliberate differences.
+
+- **`lastPointerMove` is not `lastInput`.** The bar's timestamp also moves on
+  clicks and on the seek/volume *keyboard* actions (`revealControls`), and a
+  keyboard seek must not put a hidden pointer back on screen. Only a real cursor
+  move touches `lastPointerMove`. Don't collapse the two fields.
+- **Fullscreen only.** In a window the pointer is how the user reaches the title
+  bar, the other windows and the rest of the desktop; fullscreen is the one state
+  where it sits over the picture with nothing to do. `fullscreen()` asks GLFW
+  (`GetMonitor() != nil`) rather than tracking a flag, so it cannot drift from
+  what `toggleFullscreen` did.
+- **3 s, not the bar's 1 s.** A bar going away is undone by moving a
+  millimetre; a vanished pointer is briefly disorienting, so it waits until the
+  mouse is clearly out of use. Reconciled from the loop for the same reason as
+  the bar — the loop already ticks every `idleFrame`, so no timer — but note the
+  asymmetry: the *hide* is loop-driven (nothing moves when the mouse is the thing
+  that stopped), while the *reveal* happens in the cursor callback via
+  `handlePointerMove`, because it has to feel simultaneous with the movement
+  rather than up to a frame late.
+- **`pointerBusy` pins it visible**: a knob held still mid-drag or an open
+  context menu is a pointer in use, not an idle one. It reuses the bar's
+  `barDragging` so the two auto-hides agree on what a drag is. The other overlays
+  (info, help, confirm) are keyboard-driven and don't count.
+
+`syncCursor` calls GLFW only on a change, so the steady state is free, and
+`applyCursorMode` uses `CursorHidden` rather than `CursorDisabled`: the pointer
+is invisible over the window but still moves normally and can leave for another
+screen. `CursorDisabled` would grab it and switch GLFW to relative motion,
+breaking every widget in the bar.
+
 ## Error-handling policy
 
 Startup errors (bad config, GL/mpv init) are fatal. Runtime mpv
