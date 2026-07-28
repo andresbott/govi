@@ -218,6 +218,13 @@ func Run(ctx context.Context, path string, cfg Config) error {
 
 	start := time.Now()
 
+	// Resolved before initWindow, because GLFW may change the working directory
+	// during its own initialisation (see the chdir hint there) and mpv resolves a
+	// relative path against the cwd it is called with. Belt and braces alongside
+	// that hint: whatever a future GLFW or a plugin does to the cwd, the path the
+	// user typed is already anchored to the directory they typed it in.
+	path = absMediaPath(path, p.log)
+
 	if err := p.initWindow(); err != nil {
 		return err
 	}
@@ -271,10 +278,11 @@ func Run(ctx context.Context, path string, cfg Config) error {
 	p.registerCallbacks()
 
 	// A cold start from Finder (double-clicking a video when govi is not running)
-	// passes no argument: the path came in as an open-document event during
-	// window creation and is waiting in the queue. Take it now rather than
-	// leaving it to the loop, so the file is loaded before the first frame
-	// instead of after a visible flash of the idle screen.
+	// passes no argument: the path came in as an open-document event while
+	// initWindow finished AppKit's launch sequence, and is waiting in the queue.
+	// Take it now rather than leaving it to the loop, so the file is loaded before
+	// the first frame instead of after a visible flash of the idle screen. Always
+	// absolute — it comes from Cocoa's fileSystemRepresentation, not from argv.
 	if path == "" {
 		path = takePendingOpen()
 	}
@@ -310,24 +318,32 @@ func setMinSize(win *glfw.Window, minW, minH int) {
 }
 
 func (p *Player) initWindow() error {
+	// GLFW's macOS backend chdirs into Contents/Resources when it initialises
+	// inside an .app bundle, and that hint defaults to on. Since v0.1.5 govi's
+	// executable lives in the bundle, so the default would move the process out
+	// of the directory the user ran it from and silently break every relative
+	// path handed to mpv or scanPlaylist. No-op off macOS.
+	glfw.InitHint(glfw.CocoaChdirResources, glfw.False)
 	if err := glfw.Init(); err != nil {
 		return fmt.Errorf("init glfw: %w", err)
 	}
 
-	// Installed here, between glfw.Init and glfw.CreateWindow, and the position
-	// is load-bearing on macOS:
+	// Called here, between glfw.Init and glfw.CreateWindow, and both bounds are
+	// load-bearing on macOS:
 	//   - after Init, because it grafts onto the NSApplication delegate Init
 	//     creates (see openfiles_darwin.m);
-	//   - before CreateWindow, because that is what runs [NSApp run] to pump the
-	//     launch events (glfw's _glfwPlatformCreateWindow), and a cold start from
-	//     Finder — double-clicking a video when govi is not already running —
-	//     delivers its open-document event there. Installing it afterwards would
-	//     work for an already-running govi and silently drop the file in the case
-	//     users hit first.
-	// Not fatal: it only affects the bundled .app's Finder integration, and a
-	// player that runs without click-to-open beats one that refuses to start.
+	//   - before CreateWindow, because this is also what finishes AppKit's launch
+	//     sequence, and CreateWindow is what would otherwise block in [NSApp run]
+	//     waiting for a launch notification a bundled govi never receives. The
+	//     same call delivers a cold start's open-document event — double-clicking
+	//     a video when govi is not already running — so the graft has to be in
+	//     place first or that file is dropped.
+	// A failure here is fatal on macOS: without a finished launch sequence
+	// CreateWindow would hang instead of returning an error, which is the bug
+	// this replaced (a bundled govi run from a shell never opened a window).
 	if err := installOpenFilesHandler(); err != nil {
-		p.log.Warn("finder open-document events will be ignored", "err", err)
+		glfw.Terminate()
+		return fmt.Errorf("finish appkit launch: %w", err)
 	}
 
 	// The backbuffer must stay linear: mpv already outputs sRGB-encoded

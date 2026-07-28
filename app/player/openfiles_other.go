@@ -7,7 +7,9 @@ package player
 // zarf/govi.desktop), which app/cmd already passes to Run. These stubs keep the
 // loop free of build tags.
 
-// installOpenFilesHandler is a no-op off macOS.
+// installOpenFilesHandler is a no-op off macOS. Its other job on macOS —
+// finishing AppKit's launch sequence — has no analogue either: X11 and Wayland
+// have no launch handshake for glfw.CreateWindow to block on.
 func installOpenFilesHandler() error { return nil }
 
 // takePendingOpen never has anything to report off macOS.

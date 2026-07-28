@@ -2,6 +2,7 @@ package player
 
 import (
 	"fmt"
+	"log/slog"
 	"math"
 	"path/filepath"
 	"strings"
@@ -71,6 +72,27 @@ func splitPath(path string) (dir, name string) {
 	}
 	// filepath.Split keeps the trailing separator; drop it except at the root.
 	return filepath.Clean(d), n
+}
+
+// absMediaPath anchors a relative media path to the current directory, so it
+// keeps resolving after something else changes the process's cwd.
+//
+// Three cases are returned unchanged. The empty string means "no file, start on
+// the idle screen" — filepath.Abs("") would turn that into the cwd, which mpv
+// would then try to play as a directory. A URL has no cwd to be relative to, and
+// filepath would mangle its scheme. And a path Abs cannot resolve (the cwd was
+// deleted under us) is handed to mpv as-is rather than dropped: mpv's own error
+// message for it is better than silently opening the idle screen.
+func absMediaPath(path string, log *slog.Logger) string {
+	if path == "" || isURL(path) {
+		return path
+	}
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		log.Warn("could not resolve path, passing it to mpv unchanged", "path", path, "err", err)
+		return path
+	}
+	return abs
 }
 
 // isURL reports whether path looks like a URL rather than a local file, going
