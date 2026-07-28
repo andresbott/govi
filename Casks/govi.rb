@@ -2,11 +2,11 @@
 cask "govi" do
   app "govi.app"
 
-  version "0.1.7"
+  version "0.1.8"
 
   on_macos do
     on_arm do
-      sha256 "5333fa2dfdcf0d58590740247b973119f0fdca0d783b8c7e324f4a6f8824fba7"
+      sha256 "4ea3d27df32bd03121a2b2e08134ba83f86087b6e50a7bdf4b6481c399a6ea9b"
       url "https://github.com/andresbott/govi/releases/download/v#{version}/govi_Darwin_arm64.tar.gz",
         verified: "github.com/andresbott/govi/"
     end
