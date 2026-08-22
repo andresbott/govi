@@ -367,6 +367,13 @@ func (p *Player) initWindow() error {
 	}
 	glfw.WindowHint(glfw.ScaleToMonitor, glfw.True)
 	glfw.WindowHint(glfw.CocoaRetinaFramebuffer, glfw.True)
+	// A fullscreen window (SetMonitor in toggleFullscreen) defaults to
+	// auto-iconifying on focus loss, which minimises the player the moment
+	// another window is focused — unwanted on a multi-monitor setup where the
+	// video plays fullscreen on one monitor while you work on another. Keep it
+	// up instead. The "restore the previous video mode" half is moot here: we
+	// fullscreen to the monitor's current mode, so nothing is restored.
+	glfw.WindowHint(glfw.AutoIconify, glfw.False)
 	// WM_CLASS must match StartupWMClass in zarf/govi.desktop, otherwise
 	// the desktop shell cannot tie the window to the .desktop entry (no icon in
 	// the task bar, no pinning). Without these hints GLFW derives the class from
