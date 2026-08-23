@@ -3,10 +3,12 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"os/signal"
 	"runtime"
+	"runtime/debug"
 	"syscall"
 
 	"github.com/andresbott/govi/app/metainfo"
@@ -17,6 +19,13 @@ import (
 
 // Execute is the entry point for the command line.
 func Execute() {
+	// The ring buffer collects the tail of the log in memory; newRootCommand
+	// tees the logger into it, and a crash report flushes it to disk.
+	rb := logging.NewRingBuffer(0)
+	report := func(reason, detail, stack string) {
+		reportCrash(rb, reason, detail, stack)
+	}
+
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	// Uninstall the handler once the first signal has been seen, so a second
@@ -26,10 +35,31 @@ func Execute() {
 		<-ctx.Done()
 		stop()
 	}()
-	if err := newRootCommand().ExecuteContext(ctx); err != nil {
-		fmt.Fprintln(os.Stderr, err)
+
+	var runErr error
+	// A panic writes a crash report and then keeps crashing (reportPanics
+	// re-panics), so the failure is still loud and the exit code non-zero.
+	reportPanics(report, func() {
+		runErr = newRootCommand(rb).ExecuteContext(ctx)
+	})
+	if runErr != nil {
+		report("error", runErr.Error(), "")
+		fmt.Fprintln(os.Stderr, runErr)
 		os.Exit(1)
 	}
+}
+
+// reportPanics runs fn; if fn panics it calls report with the panic value and a
+// stack trace, then re-panics so the process still crashes. report is a
+// parameter so the behaviour can be tested without touching the filesystem.
+func reportPanics(report func(reason, detail, stack string), fn func()) {
+	defer func() {
+		if r := recover(); r != nil {
+			report("panic", fmt.Sprint(r), string(debug.Stack()))
+			panic(r)
+		}
+	}()
+	fn()
 }
 
 // runPlayer is the player entry point, indirected so tests can substitute it
@@ -38,7 +68,7 @@ func Execute() {
 // behaviour with cancellation.
 var runPlayer = player.Run
 
-func newRootCommand() *cobra.Command {
+func newRootCommand(rb *logging.RingBuffer) *cobra.Command {
 	var logLevel string
 	var configPath string
 
@@ -53,7 +83,13 @@ func newRootCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			slog.SetDefault(logging.New(cmd.ErrOrStderr(), level))
+			w := cmd.ErrOrStderr()
+			if rb != nil {
+				// Tee the log into the ring buffer so a crash report can
+				// include the lines leading up to the failure.
+				w = io.MultiWriter(w, rb)
+			}
+			slog.SetDefault(logging.New(w, level))
 			return nil
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
