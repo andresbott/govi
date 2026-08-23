@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"image"
 	"log/slog"
-	"os"
 	"runtime"
 	"sync/atomic"
 	"time"
@@ -234,10 +233,6 @@ func Run(ctx context.Context, path string, cfg Config) error {
 	// user typed is already anchored to the directory they typed it in.
 	path = absMediaPath(path, p.log)
 
-	// The directory a bare `govi` opens is that same launch directory; read it
-	// here, before initWindow can move it, for the same reason.
-	startDir, _ := os.Getwd()
-
 	if err := p.initWindow(); err != nil {
 		return err
 	}
@@ -300,11 +295,11 @@ func Run(ctx context.Context, path string, cfg Config) error {
 		path = takePendingOpen()
 	}
 
-	// A bare `govi`, `govi .` or `govi <dir>` opens a folder: resolve it to the
-	// folder's first video so the whole folder plays like `govi <that file>`
-	// (setPlaylist below lands the playlist on it). After takePendingOpen, so a
-	// Finder file-open still wins over the launch directory.
-	path = resolveStartPath(path, startDir)
+	// `govi .` or `govi <dir>` opens a folder: resolve it to the folder's first
+	// video so the whole folder plays like `govi <that file>` (setPlaylist below
+	// lands the playlist on it). A bare `govi` (empty path) stays empty and lands
+	// on the idle screen.
+	path = resolveStartPath(path)
 
 	if path != "" {
 		if err := p.mpv.Command([]string{"loadfile", path}); err != nil {

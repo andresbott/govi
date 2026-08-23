@@ -62,7 +62,7 @@ Grab a prebuilt `tar.gz` archive from the
 govi <file>    # play a file
 govi <dir>     # play all videos in a folder
 govi .         # play all videos in the current folder
-govi           # same as `govi .`
+govi           # open the idle screen (drop a file on it)
 govi version
 ```
 

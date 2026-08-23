@@ -102,45 +102,37 @@ func TestFirstVideoSkipsSubdirectories(t *testing.T) {
 	}
 }
 
-func TestResolveStartPathEmptyUsesCwdFirstVideo(t *testing.T) {
-	dir := mkFiles(t, "b.mkv", "a.mp4")
-	if got := resolveStartPath("", dir); got != filepath.Join(dir, "a.mp4") {
-		t.Errorf("resolveStartPath(\"\", cwd) = %q, want cwd's first video", got)
+func TestResolveStartPathEmptyReturnsEmpty(t *testing.T) {
+	if got := resolveStartPath(""); got != "" {
+		t.Errorf("resolveStartPath(\"\") = %q, want \"\" (bare govi opens the idle screen)", got)
 	}
 }
 
 func TestResolveStartPathDirectoryReturnsItsFirstVideo(t *testing.T) {
-	target := mkFiles(t, "a.mp4")
-	cwd := mkFiles(t, "z.mp4") // a different folder that must be ignored
-	if got := resolveStartPath(target, cwd); got != filepath.Join(target, "a.mp4") {
-		t.Errorf("resolveStartPath(dir, cwd) = %q, want the dir's video, not cwd's", got)
+	dir := mkFiles(t, "b.mkv", "a.mp4")
+	if got := resolveStartPath(dir); got != filepath.Join(dir, "a.mp4") {
+		t.Errorf("resolveStartPath(dir) = %q, want the dir's first video", got)
 	}
 }
 
 func TestResolveStartPathFilePassesThrough(t *testing.T) {
 	dir := mkFiles(t, "a.mp4")
 	file := filepath.Join(dir, "a.mp4")
-	if got := resolveStartPath(file, ""); got != file {
+	if got := resolveStartPath(file); got != file {
 		t.Errorf("resolveStartPath(file) = %q, want it unchanged", got)
 	}
 }
 
 func TestResolveStartPathEmptyFolderReturnsEmpty(t *testing.T) {
-	if got := resolveStartPath(t.TempDir(), ""); got != "" {
+	if got := resolveStartPath(t.TempDir()); got != "" {
 		t.Errorf("resolveStartPath(empty dir) = %q, want \"\"", got)
 	}
 }
 
 func TestResolveStartPathURLPassesThrough(t *testing.T) {
 	const url = "http://example.com/v.mp4"
-	if got := resolveStartPath(url, "/whatever"); got != url {
+	if got := resolveStartPath(url); got != url {
 		t.Errorf("resolveStartPath(url) = %q, want it unchanged", got)
-	}
-}
-
-func TestResolveStartPathAllEmptyReturnsEmpty(t *testing.T) {
-	if got := resolveStartPath("", ""); got != "" {
-		t.Errorf("resolveStartPath(\"\", \"\") = %q, want \"\"", got)
 	}
 }
 

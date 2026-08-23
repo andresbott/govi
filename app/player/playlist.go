@@ -60,9 +60,9 @@ func scanPlaylist(path string) *playlist {
 }
 
 // firstVideo returns the alphabetically-first video in dir, or "" when dir has
-// none (or cannot be read). Used to open a folder — `govi <dir>`, `govi .` or a
-// bare `govi` — as if its first video had been passed directly: the file it
-// returns is exactly the entry scanPlaylist then lands on.
+// none (or cannot be read). Used to open a folder — `govi <dir>` or `govi .` —
+// as if its first video had been passed directly: the file it returns is
+// exactly the entry scanPlaylist then lands on.
 func firstVideo(dir string) string {
 	dirents, err := os.ReadDir(dir)
 	if err != nil {
@@ -84,16 +84,12 @@ func firstVideo(dir string) string {
 	return vids[0]
 }
 
-// resolveStartPath turns the requested startup path into the file to open. An
-// empty path (bare `govi`) means the folder govi was launched in, given as cwd;
-// a directory (that default, `govi .`, or `govi <dir>`) resolves to its first
-// video so the whole folder plays as if that file had been opened. A regular
-// file or a URL passes through unchanged. It returns "" when the target is a
-// folder with no videos, so the caller falls back to the idle screen.
-func resolveStartPath(path, cwd string) string {
-	if path == "" {
-		path = cwd
-	}
+// resolveStartPath turns the requested startup path into the file to open. A
+// directory (`govi .` or `govi <dir>`) resolves to its first video so the whole
+// folder plays as if that file had been opened. A regular file or a URL passes
+// through unchanged. An empty path (bare `govi`) stays empty, and a folder with
+// no videos returns "", so the caller falls back to the idle screen.
+func resolveStartPath(path string) string {
 	if fi, err := os.Stat(path); err == nil && fi.IsDir() {
 		return firstVideo(path)
 	}
