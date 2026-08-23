@@ -59,6 +59,47 @@ func scanPlaylist(path string) *playlist {
 	return pl
 }
 
+// firstVideo returns the alphabetically-first video in dir, or "" when dir has
+// none (or cannot be read). Used to open a folder — `govi <dir>`, `govi .` or a
+// bare `govi` — as if its first video had been passed directly: the file it
+// returns is exactly the entry scanPlaylist then lands on.
+func firstVideo(dir string) string {
+	dirents, err := os.ReadDir(dir)
+	if err != nil {
+		return ""
+	}
+	var vids []string
+	for _, de := range dirents {
+		if de.IsDir() {
+			continue
+		}
+		if videoExts[strings.ToLower(filepath.Ext(de.Name()))] {
+			vids = append(vids, filepath.Join(dir, de.Name()))
+		}
+	}
+	if len(vids) == 0 {
+		return ""
+	}
+	sort.Strings(vids)
+	return vids[0]
+}
+
+// resolveStartPath turns the requested startup path into the file to open. An
+// empty path (bare `govi`) means the folder govi was launched in, given as cwd;
+// a directory (that default, `govi .`, or `govi <dir>`) resolves to its first
+// video so the whole folder plays as if that file had been opened. A regular
+// file or a URL passes through unchanged. It returns "" when the target is a
+// folder with no videos, so the caller falls back to the idle screen.
+func resolveStartPath(path, cwd string) string {
+	if path == "" {
+		path = cwd
+	}
+	if fi, err := os.Stat(path); err == nil && fi.IsDir() {
+		return firstVideo(path)
+	}
+	return path
+}
+
 // current returns the entry the playlist points at, or "" when empty.
 func (pl *playlist) current() string {
 	if pl == nil || pl.idx < 0 || pl.idx >= len(pl.entries) {

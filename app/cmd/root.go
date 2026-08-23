@@ -43,7 +43,7 @@ func newRootCommand() *cobra.Command {
 	var configPath string
 
 	cmd := &cobra.Command{
-		Use:           "govi [file]",
+		Use:           "govi [file|dir]",
 		Short:         "govi: minimalistic video player based on mpv",
 		SilenceUsage:  true,
 		SilenceErrors: true,
