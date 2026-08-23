@@ -19,6 +19,13 @@ import (
 
 // Execute is the entry point for the command line.
 func Execute() {
+	// A GUI launcher (e.g. KDE's "Open with") can hand us a stderr pipe whose
+	// reader then goes away; without this, the first log line written to that
+	// broken pipe would make the Go runtime kill govi with SIGPIPE (the window
+	// flashes and vanishes). Ignoring it turns that write into a discarded
+	// EPIPE instead. Must run before anything writes to stderr.
+	signal.Ignore(syscall.SIGPIPE)
+
 	// The ring buffer collects the tail of the log in memory; newRootCommand
 	// tees the logger into it, and a crash report flushes it to disk.
 	rb := logging.NewRingBuffer(0)
