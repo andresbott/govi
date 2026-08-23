@@ -60,9 +60,13 @@ Grab a prebuilt `tar.gz` archive from the
 
 ```sh
 govi <file>    # play a file
-govi           # open the idle screen (drop a file on it)
+govi <dir>     # play all videos in a folder
+govi .         # play all videos in the current folder
+govi           # same as `govi .`
 govi version
 ```
+
+An empty folder (no videos) opens the idle screen — drop a file on it to play.
 
 ## Distinctive features
 

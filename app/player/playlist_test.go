@@ -65,6 +65,85 @@ func TestScanPlaylistNonFileReturnsNil(t *testing.T) {
 	}
 }
 
+func TestFirstVideoReturnsAlphabeticallyFirstVideo(t *testing.T) {
+	dir := mkFiles(t, "b.mkv", "a.mp4", "c.webm", "notes.txt", "cover.jpg")
+	if got := firstVideo(dir); got != filepath.Join(dir, "a.mp4") {
+		t.Errorf("firstVideo = %q, want %q", got, filepath.Join(dir, "a.mp4"))
+	}
+}
+
+func TestFirstVideoIgnoresNonVideoFiles(t *testing.T) {
+	dir := mkFiles(t, "notes.txt", "cover.jpg")
+	if got := firstVideo(dir); got != "" {
+		t.Errorf("firstVideo = %q, want \"\" when the folder has no videos", got)
+	}
+}
+
+func TestFirstVideoEmptyFolderReturnsEmpty(t *testing.T) {
+	if got := firstVideo(t.TempDir()); got != "" {
+		t.Errorf("firstVideo(empty) = %q, want \"\"", got)
+	}
+}
+
+func TestFirstVideoMissingFolderReturnsEmpty(t *testing.T) {
+	if got := firstVideo(filepath.Join(t.TempDir(), "nope")); got != "" {
+		t.Errorf("firstVideo(missing) = %q, want \"\"", got)
+	}
+}
+
+func TestFirstVideoSkipsSubdirectories(t *testing.T) {
+	dir := mkFiles(t, "a.mp4")
+	// A subdirectory whose name sorts first and looks like a video must not win.
+	if err := os.Mkdir(filepath.Join(dir, "0sub.mp4"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if got := firstVideo(dir); got != filepath.Join(dir, "a.mp4") {
+		t.Errorf("firstVideo = %q, want the file a.mp4, not the subdir", got)
+	}
+}
+
+func TestResolveStartPathEmptyUsesCwdFirstVideo(t *testing.T) {
+	dir := mkFiles(t, "b.mkv", "a.mp4")
+	if got := resolveStartPath("", dir); got != filepath.Join(dir, "a.mp4") {
+		t.Errorf("resolveStartPath(\"\", cwd) = %q, want cwd's first video", got)
+	}
+}
+
+func TestResolveStartPathDirectoryReturnsItsFirstVideo(t *testing.T) {
+	target := mkFiles(t, "a.mp4")
+	cwd := mkFiles(t, "z.mp4") // a different folder that must be ignored
+	if got := resolveStartPath(target, cwd); got != filepath.Join(target, "a.mp4") {
+		t.Errorf("resolveStartPath(dir, cwd) = %q, want the dir's video, not cwd's", got)
+	}
+}
+
+func TestResolveStartPathFilePassesThrough(t *testing.T) {
+	dir := mkFiles(t, "a.mp4")
+	file := filepath.Join(dir, "a.mp4")
+	if got := resolveStartPath(file, ""); got != file {
+		t.Errorf("resolveStartPath(file) = %q, want it unchanged", got)
+	}
+}
+
+func TestResolveStartPathEmptyFolderReturnsEmpty(t *testing.T) {
+	if got := resolveStartPath(t.TempDir(), ""); got != "" {
+		t.Errorf("resolveStartPath(empty dir) = %q, want \"\"", got)
+	}
+}
+
+func TestResolveStartPathURLPassesThrough(t *testing.T) {
+	const url = "http://example.com/v.mp4"
+	if got := resolveStartPath(url, "/whatever"); got != url {
+		t.Errorf("resolveStartPath(url) = %q, want it unchanged", got)
+	}
+}
+
+func TestResolveStartPathAllEmptyReturnsEmpty(t *testing.T) {
+	if got := resolveStartPath("", ""); got != "" {
+		t.Errorf("resolveStartPath(\"\", \"\") = %q, want \"\"", got)
+	}
+}
+
 func always(string) bool { return true }
 
 func TestAdvanceMovesThroughEntries(t *testing.T) {
