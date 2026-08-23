@@ -21,7 +21,7 @@ func TestRunPassesCancellableContextToPlayer(t *testing.T) {
 	}
 	t.Cleanup(func() { runPlayer = orig })
 
-	cmd := newRootCommand()
+	cmd := newRootCommand(nil)
 	var buf bytes.Buffer
 	cmd.SetOut(&buf)
 	cmd.SetErr(&buf)
@@ -44,7 +44,7 @@ func TestRunPassesCancellableContextToPlayer(t *testing.T) {
 }
 
 func TestVersionCmdPrintsVersionInfo(t *testing.T) {
-	cmd := newRootCommand()
+	cmd := newRootCommand(nil)
 	var buf bytes.Buffer
 	cmd.SetOut(&buf)
 	cmd.SetErr(&buf)
@@ -60,7 +60,7 @@ func TestVersionCmdPrintsVersionInfo(t *testing.T) {
 }
 
 func TestUnknownFlagPrintsHelp(t *testing.T) {
-	cmd := newRootCommand()
+	cmd := newRootCommand(nil)
 	var buf bytes.Buffer
 	cmd.SetOut(&buf)
 	cmd.SetErr(&buf)
@@ -74,7 +74,7 @@ func TestUnknownFlagPrintsHelp(t *testing.T) {
 }
 
 func TestLogFlagInvalidLevelFails(t *testing.T) {
-	cmd := newRootCommand()
+	cmd := newRootCommand(nil)
 	var buf bytes.Buffer
 	cmd.SetOut(&buf)
 	cmd.SetErr(&buf)
@@ -85,7 +85,7 @@ func TestLogFlagInvalidLevelFails(t *testing.T) {
 }
 
 func TestLogFlagAcceptedOnVersion(t *testing.T) {
-	cmd := newRootCommand()
+	cmd := newRootCommand(nil)
 	var buf bytes.Buffer
 	cmd.SetOut(&buf)
 	cmd.SetErr(&buf)
@@ -99,7 +99,7 @@ func TestLogFlagAcceptedOnVersion(t *testing.T) {
 }
 
 func TestHelpFlagPrintsHelp(t *testing.T) {
-	cmd := newRootCommand()
+	cmd := newRootCommand(nil)
 	var buf bytes.Buffer
 	cmd.SetOut(&buf)
 	cmd.SetErr(&buf)
