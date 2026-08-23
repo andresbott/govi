@@ -83,7 +83,7 @@ func newRootCommand(rb *logging.RingBuffer) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			var w io.Writer = cmd.ErrOrStderr()
+			w := cmd.ErrOrStderr()
 			if rb != nil {
 				// Tee the log into the ring buffer so a crash report can
 				// include the lines leading up to the failure.

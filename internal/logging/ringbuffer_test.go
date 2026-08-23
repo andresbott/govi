@@ -52,11 +52,11 @@ func TestRingBufferSplitsMultiLineWrite(t *testing.T) {
 // so a single log record split across writes is still stored as one line.
 func TestRingBufferHoldsPartialLineUntilNewline(t *testing.T) {
 	rb := NewRingBuffer(10)
-	rb.Write([]byte("hel"))
+	_, _ = rb.Write([]byte("hel"))
 	if got := rb.Snapshot(); got != "" {
 		t.Fatalf("partial line should not appear yet, got %q", got)
 	}
-	rb.Write([]byte("lo\n"))
+	_, _ = rb.Write([]byte("lo\n"))
 	if got, want := rb.Snapshot(), "hello\n"; got != want {
 		t.Fatalf("expected reassembled line, got %q", got)
 	}
